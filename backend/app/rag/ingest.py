@@ -88,6 +88,36 @@ def embed_texts(texts: Iterable[str]) -> List[List[float]]:
     vectors = MODEL.encode(list(texts), show_progress_bar=False, convert_to_numpy=True)
     return vectors.tolist()
 
+from io import BytesIO
+from pathlib import Path
+import tempfile
+
+def upsert_file_bytes(file_bytes: bytes, filename: str,
+                      collection_name: str = settings.qdrant_collection,
+                      chunk_size: int = settings.chunk_token_size,
+                      overlap: int = settings.chunk_overlap) -> dict:
+    """
+    Accept raw file bytes (uploaded via HTTP), write to a temp file, and ingest similarly to upsert_documents.
+    Supports pdf, md, txt.
+    Returns dict with upserted_chunks count.
+    """
+    # write to a temporary file with appropriate suffix
+    suffix = Path(filename).suffix or ".txt"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp.flush()
+        tmp_path = Path(tmp.name)
+
+    try:
+        # reuse upsert_documents logic by passing the temp path
+        result = upsert_documents([str(tmp_path)], collection_name=collection_name,
+                                  chunk_size=chunk_size, overlap=overlap)
+        return result
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
 
 def upsert_documents(
     paths: List[str],

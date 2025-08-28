@@ -1,0 +1,31 @@
+:root{
+  --bg:#0f1724;
+  --panel:#0b1220;
+  --accent:#22c55e;
+  --muted:#94a3b8;
+  --white:#e6eef8;
+}
+html,body,#root{height:100%; margin:0; font-family:Inter,ui-sans-serif,system-ui,Helvetica,Arial; background:linear-gradient(180deg,#071226 0%, #07192b 100%); color:var(--white)}
+.app-v2{display:grid; grid-template-columns:300px 1fr 420px; gap:20px; padding:24px; height:100vh; box-sizing:border-box}
+.left-column, .center-column, .right-column{background:rgba(255,255,255,0.02); border-radius:12px; padding:16px; display:flex; flex-direction:column}
+.left-column h2, .center-column h2 { margin:0 0 12px 0 }
+.rag-panel .upload{margin-bottom:10px}
+.doc-list{display:flex; flex-direction:column; gap:8px; overflow:auto}
+.doc-item{background:rgba(255,255,255,0.02); padding:8px; border-radius:8px}
+.doc-name{font-weight:600}
+.center-column .controls{margin-top:12px}
+.chat-window{flex:1; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:8px}
+.chat-turn{display:flex}
+.chat-turn.user{justify-content:flex-end}
+.chat-turn.assistant{justify-content:flex-start}
+.bubble{max-width:80%; padding:10px 14px; border-radius:12px; background:rgba(255,255,255,0.03)}
+.mic-btn{background:linear-gradient(180deg,#1f2937,#111827); color:var(--white); border:none; padding:12px 18px; border-radius:10px; cursor:pointer; font-size:16px}
+.hint{font-size:12px; color:var(--muted); margin-top:6px}
+.mascot{width:360px; height:360px; background:linear-gradient(180deg,#0b1220,#08121a); border-radius:20px; display:flex; flex-direction:column; align-items:center; justify-content:center; box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+.face{width:240px; height:240px; background:linear-gradient(180deg,#0b1b2b,#08202f); border-radius:120px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative}
+.eyes{display:flex; gap:40px; margin-bottom:24px}
+.eye{width:34px; height:34px; background:#fff; border-radius:50%}
+.eye::after{content:''; display:block; width:14px; height:14px; background:#000; border-radius:50%; margin:8px}
+.mouth-canvas{width:140px; height:80px; display:block}
+.emotion-label{margin-top:12px; color:var(--muted); text-transform:capitalize}
+.error{color:#ff6b6b; font-size:13px}

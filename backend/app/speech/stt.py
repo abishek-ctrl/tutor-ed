@@ -13,15 +13,20 @@ def transcribe_audio(audio_bytes: bytes, language: str = None) -> str:
     Sends audio to Groq STT endpoint and returns transcript.
     """
     try:
-        # API compatible with OpenAI audio transcription endpoint
+        # The Groq SDK expects a file tuple: (filename, file_bytes, content_type)
+        # This ensures the request is sent as multipart/form-data with the correct headers.
+        files = ("audio.wav", audio_bytes, "audio/wav")
+
         result = client.audio.transcriptions.create(
             model="whisper-large-v3",
-            file=audio_bytes,
+            file=files,
             # optional: provide language ISO code if known to speed up
             language=language,
-            response_format="text"
+            # The API returns JSON, so we parse the text from it.
+            response_format="json"
         )
-        return result["text"]
+        # The result from a json response_format is an object with a 'text' attribute
+        return result.text
     except Exception as e:
         logger.exception("Groq STT transcription failed.")
         raise

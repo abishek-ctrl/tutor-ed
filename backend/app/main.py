@@ -13,6 +13,15 @@ from fastapi import File, UploadFile
 from app.speech.stt import transcribe_audio
 from fastapi.responses import StreamingResponse, PlainTextResponse, Response
 from app.speech.tts import text_to_speech
+from app.rag.ingest import upsert_file_bytes
+from qdrant_client import QdrantClient
+from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+from app.core.config import settings
+from app.rag.retriever import QdrantRetriever
+from app.rag.ingest import upsert_file_bytes
+
 
 logger = logging.getLogger("ai_tutor")
 logging.basicConfig(level=logging.INFO)
@@ -139,6 +148,41 @@ async def chat(req: ChatRequest):
     except Exception as e:
         logger.exception("Chat /chat failed.")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/docs/list")
+async def docs_list(limit: int = 200):
+    """
+    Return a list of indexed documents (source + snippet).
+    Response: { "docs": [ { "source": "...", "snippet": "..." }, ... ] }
+    """
+    try:
+        # Use the retriever helper to page Qdrant and deduplicate sources
+        docs = retriever.list_documents(limit=limit, batch_size=200)
+        # return a plain dict (FastAPI will serialize to JSON)
+        return {"docs": docs}
+    except Exception as e:
+        logger.exception("Docs list failed")
+        # return a standard error response
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/docs/upload")
+async def docs_upload(file: UploadFile = File(...)):
+    """
+    Accept a single file, ingest into Qdrant, and return upserted chunks count.
+    Example response: {"upserted_chunks": 42}
+    """
+    try:
+        contents = await file.read()
+        # upsert_file_bytes writes a temp file, chunks, embeds, and upserts to Qdrant
+        res = upsert_file_bytes(contents, file.filename, collection_name=settings.qdrant_collection)
+        # Return the result dict produced by upsert_file_bytes (e.g., {"upserted_chunks": N})
+        return res
+    except Exception as e:
+        logger.exception("Document upload failed.")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 if __name__ == "__main__":
