@@ -1,4 +1,3 @@
-# backend/app/rag/retriever.py
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import ScoredPoint
@@ -8,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 
 EMBED_MODEL = SentenceTransformer(settings.embedding_model)
-
 
 @dataclass
 class RetrievedDoc:

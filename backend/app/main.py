@@ -1,4 +1,3 @@
-# backend/app/main.py
 import uvicorn
 from fastapi import FastAPI, HTTPException, Body
 from pydantic import BaseModel, Field
@@ -12,8 +11,8 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import File, UploadFile
 from app.speech.stt import transcribe_audio
+from fastapi.responses import StreamingResponse, PlainTextResponse, Response
 from app.speech.tts import text_to_speech
-from fastapi.responses import StreamingResponse, PlainTextResponse
 
 logger = logging.getLogger("ai_tutor")
 logging.basicConfig(level=logging.INFO)
@@ -77,15 +76,23 @@ async def stt_endpoint(file: UploadFile = File(...), language: Optional[str] = N
 
 @app.post("/tts")
 async def tts_endpoint(payload: Dict[str, Any] = Body(...)):
+    """
+    Expects JSON:
+      { "text": "...", "voice": "Fritz-PlayAI", "format": "wav" }
+    voice is optional; defaults to Fritz-PlayAI if omitted.
+    """
     text = payload.get("text")
     voice = payload.get("voice")
     fmt = payload.get("format", "wav")
     if not text:
         raise HTTPException(status_code=400, detail="Missing 'text' field.")
     try:
-        audio_bytes = text_to_speech(text, voice=voice, response_format=fmt)
-        return StreamingResponse(content=audio_bytes, media_type="audio/wav")
+        audio_bytes = text_to_speech(text=text, voice=voice, response_format=fmt)
+        # Return raw bytes with appropriate media type
+        media_type = "audio/wav" if fmt.lower() == "wav" else "application/octet-stream"
+        return Response(content=audio_bytes, media_type=media_type)
     except Exception as e:
+        logger.exception("Error in /tts endpoint")
         raise HTTPException(status_code=500, detail=str(e))
 
 

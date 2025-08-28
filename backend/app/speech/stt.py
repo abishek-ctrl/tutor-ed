@@ -1,4 +1,3 @@
-# backend/app/speech/stt.py
 import logging
 from typing import Tuple
 from groq import Groq

@@ -1,4 +1,3 @@
-# backend/app/rag/emotion.py
 from groq import Groq
 from app.core.config import settings
 import logging

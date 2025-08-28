@@ -1,4 +1,3 @@
-# backend/app/rag/generator.py
 from typing import List, Dict, Any
 from groq import Groq
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
