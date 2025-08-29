@@ -1,10 +1,8 @@
-# backend/app/rag/retriever.py
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.http import models as rest_models
-from app.core.config import settings
 from sentence_transformers import SentenceTransformer
 from dataclasses import dataclass
+from app.core.config import settings
 import logging
 
 logger = logging.getLogger("rag.retriever")
@@ -39,57 +37,100 @@ class QdrantRetriever:
             payload = r.payload or {}
             docs.append(RetrievedDoc(
                 id=str(r.id),
-                score=float(r.score),
+                score=float(getattr(r, "score", 0.0)),
                 text=payload.get("text", ""),
-                source=payload.get("source", ""),
+                source=payload.get("file_name") or payload.get("source") or "",
                 metadata=payload
             ))
         return docs
 
-    def list_documents(self, limit: int = 1000, batch_size: int = 200) -> List[Dict[str, Any]]:
+    def _normalize_scroll_points(self, points_raw) -> List[Any]:
+        """
+        Normalize different qdrant-client scroll return shapes into a flat list of point-like objects.
+        Handles:
+         - list of ScoredPoint / Point structs
+         - dict wrappers like {"result": [...]} or {"points": [...]}
+         - nested lists (e.g. [[...], [...]])
+         - dicts that contain 'result' or 'points'
+        """
+        if points_raw is None:
+            return []
+        # dict wrappers
+        if isinstance(points_raw, dict):
+            if "result" in points_raw and isinstance(points_raw["result"], list):
+                return points_raw["result"]
+            if "points" in points_raw and isinstance(points_raw["points"], list):
+                return points_raw["points"]
+        # if list
+        if isinstance(points_raw, list):
+            # Flatten one level if nested lists
+            if points_raw and all(isinstance(x, list) for x in points_raw):
+                flat = []
+                for sub in points_raw:
+                    flat.extend(sub)
+                return flat
+            return points_raw
+        # fallback: single object -> wrap
+        return [points_raw]
+
+    def list_documents(self, email: Optional[str] = None, limit: int = 1000, batch_size: int = 200) -> List[Dict[str, Any]]:
         """
         Page through Qdrant collection and return a list of unique document sources with a short snippet.
-        Returns list of {"source": str, "snippet": str}
+        If email is provided, only return documents where payload.email == email.
+        Returns list of {"source": str, "snippet": str, "email": str|None}
         """
         unique: Dict[str, Dict[str, Any]] = {}
         offset = 0
 
-        # Defensive: some qdrant-client versions use different signatures for scroll()
+        # Defensive: ensure scroll exists
         scroll_fn = getattr(self.client, "scroll", None)
         if scroll_fn is None:
-            raise RuntimeError("Qdrant client does not support scroll(). Please upgrade qdrant-client.")
+            raise RuntimeError("Qdrant client does not support scroll(); please upgrade qdrant-client.")
 
         while True:
             try:
-                # Note: some qdrant-client versions accept collection_name as keyword, others positional.
                 try:
-                    points = self.client.scroll(collection_name=self.collection, limit=batch_size, offset=offset)
+                    raw_points = self.client.scroll(collection_name=self.collection, limit=batch_size, offset=offset)
                 except TypeError:
-                    # fallback to positional if signature differs
-                    points = self.client.scroll(self.collection, limit=batch_size, offset=offset)
+                    # fallback to positional signature
+                    raw_points = self.client.scroll(self.collection, limit=batch_size, offset=offset)
             except Exception as e:
                 logger.exception("Failed to scroll Qdrant collection: %s", e)
                 break
 
-            # points may be an empty list when exhausted
+            points = self._normalize_scroll_points(raw_points)
             if not points:
                 break
 
             for p in points:
-                payload = getattr(p, "payload", None) or {}
-                source = payload.get("source") or payload.get("source_path") or payload.get("file_name") or "unknown"
+                payload = {}
+                try:
+                    if hasattr(p, "payload"):
+                        payload = p.payload or {}
+                    elif isinstance(p, dict):
+                        payload = p.get("payload") or {}
+                    else:
+                        payload = getattr(p, "payload", {}) or {}
+                except Exception:
+                    payload = {}
+
+                # filter by email if provided
+                if email:
+                    p_email = payload.get("email")
+                    if not p_email or str(p_email).lower() != str(email).lower():
+                        continue
+
+                source = payload.get("file_name") or payload.get("source") or payload.get("source_path") or "unknown"
                 if not isinstance(source, str):
                     source = str(source)
                 snippet = (payload.get("text") or "")[:500]
-                if source not in unique:
-                    unique[source] = {"source": source, "snippet": snippet}
 
-                # Stop early if we already reached the desired number of unique docs
+                if source not in unique:
+                    unique[source] = {"source": source, "snippet": snippet, "email": payload.get("email")}
                 if len(unique) >= limit:
                     break
 
             offset += len(points)
-            # If we received fewer than batch_size results, we're at the end
             if len(points) < batch_size or len(unique) >= limit:
                 break
 

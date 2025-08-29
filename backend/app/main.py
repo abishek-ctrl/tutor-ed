@@ -1,34 +1,30 @@
-import uvicorn
-from fastapi import FastAPI, HTTPException, Body
-from pydantic import BaseModel, Field
+# backend/app/main.py
+import io
+import os
+import tempfile
+import logging
 from typing import Optional, List, Dict, Any
-from app.rag.retriever import QdrantRetriever, RetrievedDoc
-from app.rag.generator import generate_answer
-from app.rag.emotion import classify_emotion
-from app.rag.memory import append_turn, update_summary_if_needed, get_summary
-from app.core.config import settings
-import logging
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import File, UploadFile
-from app.speech.stt import transcribe_audio
-from fastapi.responses import StreamingResponse, PlainTextResponse, Response
-from app.speech.tts import text_to_speech
-from app.rag.ingest import upsert_file_bytes
-from qdrant_client import QdrantClient
-from fastapi import FastAPI, HTTPException, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-import logging
+from fastapi.responses import StreamingResponse, PlainTextResponse, JSONResponse
+from pydantic import BaseModel
+import uvicorn
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from groq import Groq
+
 from app.core.config import settings
 from app.rag.retriever import QdrantRetriever
 from app.rag.ingest import upsert_file_bytes
-
+from app.rag.generator import generate_answer
+from app.rag.emotion import classify_emotion
+from app.rag.memory import append_turn, update_summary_if_needed, get_summary
 
 logger = logging.getLogger("ai_tutor")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="RAG Tutor API", version="1.0")
 
-# CORS - for local dev allow all; in prod set origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,154 +32,301 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# groq client init: using env var or settings
+_groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY") or getattr(settings, "groq_api_key", None))
 retriever = QdrantRetriever()
 
+# ---- Utility wrappers for Groq STT / TTS ----
 
-class QueryRequest(BaseModel):
-    query: str = Field(..., description="Single-turn query text")
-    namespace: Optional[str] = Field(None, description="Optional namespace / collection")
-    top_k: Optional[int] = Field(6, description="Number of retrieved chunks to include")
-
-
-class QueryResponse(BaseModel):
-    text: str
-    emotion: str
-    citations: List[Dict[str, Any]] = []
-    raw: Optional[Dict[str, Any]] = None
-
-
-@app.post("/query", response_model=QueryResponse)
-async def query_single(req: QueryRequest):
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), retry=retry_if_exception_type(Exception))
+def groq_stt_transcribe_from_file(file_path: str, language: Optional[str] = None) -> str:
+    """
+    Uses Groq SDK transcription by passing a file handle (per Groq examples).
+    Returns the transcript text (string).
+    """
     try:
-        top_k = req.top_k or 6
-        docs = retriever.retrieve(req.query, top_k=top_k)
-        contexts = [{"id": d.id, "text": d.text, "source": d.source} for d in docs]
-
-        # Generate answer
-        gen = generate_answer(req.query, contexts, max_tokens=512, temperature=0.0)
-        text = gen["text"]
-
-        # Classify emotion
-        emotion = classify_emotion(text)
-
-        # Build citation list from contexts used (we include top_k mapping)
-        citations = [{"id": c["id"], "source": c["source"]} for c in contexts]
-
-        return QueryResponse(text=text, emotion=emotion, citations=citations, raw=None)
+        with open(file_path, "rb") as fh:
+            transcription = _groq_client.audio.transcriptions.create(
+                file=fh,
+                model="whisper-large-v3-turbo",
+                prompt=None,
+                response_format="verbose_json",  # use verbose for richer data; we'll extract .text if present
+                language=language,
+                temperature=0.0
+            )
+        # transcription may be an object with .text or a dict
+        text = ""
+        if isinstance(transcription, dict):
+            text = transcription.get("text") or transcription.get("transcription") or ""
+        else:
+            text = getattr(transcription, "text", "") or getattr(transcription, "transcription", "") or str(transcription)
+        return text
     except Exception as e:
-        logger.exception("Query /query failed.")
+        logger.exception("Groq STT failed")
+        raise
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), retry=retry_if_exception_type(Exception))
+def groq_tts_synthesize_to_file(text: str, voice: Optional[str], response_format: str = "wav") -> str:
+    """
+    Call Groq TTS (playai-tts) and write to a temp file, returning the temp path.
+    Example usage from Groq SDK: response.write_to_file(path)
+    """
+    if not voice:
+        # default voice; change as you prefer
+        voice = "Fritz-PlayAI"
+
+    try:
+        response = _groq_client.audio.speech.create(
+            model="playai-tts",
+            voice=voice,
+            input=text,
+            response_format=response_format
+        )
+        # response supports write_to_file per SDK example
+        suffix = ".wav" if response_format in ("wav", "wave") else ".mp3"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.close()
+        try:
+            # SDK exposes write_to_file on response in the example
+            if hasattr(response, "write_to_file"):
+                response.write_to_file(tmp.name)
+            else:
+                # if response is bytes-like or has .content
+                data = getattr(response, "content", None) or (response if isinstance(response, (bytes, bytearray)) else None)
+                if data is None:
+                    # If response is dict with 'audio' key
+                    if isinstance(response, dict) and response.get("audio"):
+                        data = response.get("audio")
+                if data is None:
+                    raise RuntimeError("Unknown Groq TTS response shape")
+                with open(tmp.name, "wb") as fh:
+                    fh.write(data)
+        except Exception:
+            # cleanup file on inner error
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+            raise
+        return tmp.name
+    except Exception as e:
+        logger.exception("Groq TTS failed")
+        raise
+
+# ---- API endpoints ----
+
+@app.post("/docs/upload")
+async def docs_upload(email: Optional[str] = Form(None), files: List[UploadFile] = File(...)):
+    """
+    Upload one or more files and index them into Qdrant with metadata.email set.
+    Form fields:
+      - email (optional)
+      - files (one or many)
+    Returns: {"upserted_chunks": N}
+    """
+    try:
+        total = 0
+        for f in files:
+            contents = await f.read()
+            res = upsert_file_bytes(contents, f.filename, email=email, collection_name=settings.qdrant_collection)
+            total += res.get("upserted_chunks", 0)
+        return {"upserted_chunks": total}
+    except Exception as e:
+        logger.exception("Document upload failed.")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/stt")
-async def stt_endpoint(file: UploadFile = File(...), language: Optional[str] = None):
+
+@app.get("/docs/list")
+async def docs_list(email: Optional[str] = Query(None), limit: int = 200):
+    """
+    List indexed documents (optionally filter by email).
+    Returns { "docs": [ { "source": "...", "snippet": "...", "email": "..."}, ... ] }
+    """
     try:
-        audio = await file.read()
-        transcript = transcribe_audio(audio, language=language)
-        return PlainTextResponse(transcript)
+        docs = retriever.list_documents(email=email, limit=limit, batch_size=200)
+        return {"docs": docs}
     except Exception as e:
+        logger.exception("Docs list failed")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/tts")
-async def tts_endpoint(payload: Dict[str, Any] = Body(...)):
+
+@app.delete("/docs/delete")
+async def docs_delete(email: str = Query(...), file_names: Optional[List[str]] = Query(None)):
     """
-    Expects JSON:
-      { "text": "...", "voice": "Fritz-PlayAI", "format": "wav" }
-    voice is optional; defaults to Fritz-PlayAI if omitted.
+    Delete documents for a given email.
+    Query params:
+      - email (required)
+      - file_names (optional, repeatable) e.g. ?file_names=a.pdf&file_names=b.pdf
+    If file_names omitted, delete all files linked to email.
+    Returns { "deleted": True, "deleted_ids": N }
     """
-    text = payload.get("text")
-    voice = payload.get("voice")
-    fmt = payload.get("format", "wav")
-    if not text:
-        raise HTTPException(status_code=400, detail="Missing 'text' field.")
     try:
-        audio_bytes = text_to_speech(text=text, voice=voice, response_format=fmt)
-        # Return raw bytes with appropriate media type
-        media_type = "audio/wav" if fmt.lower() == "wav" else "application/octet-stream"
-        return Response(content=audio_bytes, media_type=media_type)
+        client = retriever.client
+        ids_to_delete = []
+        offset = 0
+        batch = 200
+        while True:
+            try:
+                raw_points = None
+                try:
+                    raw_points = client.scroll(collection_name=settings.qdrant_collection, limit=batch, offset=offset)
+                except TypeError:
+                    raw_points = client.scroll(settings.qdrant_collection, limit=batch, offset=offset)
+            except Exception as e:
+                logger.exception("Failed to scroll Qdrant during delete: %s", e)
+                break
+
+            # Normalize
+            points = raw_points if isinstance(raw_points, list) else (raw_points.get("result") if isinstance(raw_points, dict) else [])
+            if not points:
+                break
+
+            for p in points:
+                payload = getattr(p, "payload", None) or (p.get("payload") if isinstance(p, dict) else {}) or {}
+                p_email = payload.get("email")
+                if not p_email or str(p_email).lower() != str(email).lower():
+                    continue
+                file_name = payload.get("file_name") or payload.get("source") or payload.get("file")
+                keep = False
+                if file_names:
+                    if file_name in file_names:
+                        keep = True
+                    else:
+                        keep = False
+                else:
+                    keep = True
+
+                if keep:
+                    pid = getattr(p, "id", None) or (p.get("id") if isinstance(p, dict) else None)
+                    if pid is not None:
+                        ids_to_delete.append(pid)
+
+            offset += len(points)
+            if len(points) < batch:
+                break
+
+        # Deduplicate and delete
+        ids_to_delete = list({i for i in ids_to_delete if i is not None})
+        if not ids_to_delete:
+            return {"deleted": True, "deleted_ids": 0}
+        try:
+            # Many qdrant-client versions accept points= or ids=
+            client.delete(collection_name=settings.qdrant_collection, points=ids_to_delete)
+        except TypeError:
+            client.delete(collection_name=settings.qdrant_collection, ids=ids_to_delete)
+        return {"deleted": True, "deleted_ids": len(ids_to_delete)}
     except Exception as e:
-        logger.exception("Error in /tts endpoint")
+        logger.exception("Docs delete failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/user/has-data")
+async def user_has_data(email: str = Query(...)):
+    try:
+        docs = retriever.list_documents(email=email, limit=1, batch_size=50)
+        return {"has_data": len(docs) > 0}
+    except Exception as e:
+        logger.exception("user/has-data failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 class ChatRequest(BaseModel):
     message: str
     session_id: str
-    top_k: Optional[int] = Field(6)
+    name: Optional[str] = None
+    email: Optional[str] = None
+    top_k: Optional[int] = 6
+    short_answer: Optional[bool] = False
 
 
-class ChatResponse(BaseModel):
-    session_id: str
-    text: str
-    emotion: str
-    citations: List[Dict[str, Any]]
-
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+@app.post("/chat")
+async def chat_endpoint(req: ChatRequest):
+    """
+    Chat endpoint: retrieve docs, call generator, append memory.
+    """
     try:
-        # Persist user turn
-        append_turn(req.session_id, "user", req.message)
-        # Optionally update summary if conversation long
+        append_turn(req.session_id, "user", f"{req.name or 'user'}: {req.message}")
         update_summary_if_needed(req.session_id, threshold_turns=20)
         summary = get_summary(req.session_id) or ""
-
-        # Retrieve docs
         docs = retriever.retrieve(req.message, top_k=req.top_k or 6)
         contexts = [{"id": d.id, "text": d.text, "source": d.source} for d in docs]
-
-        # Inject summary as an additional context (if exists)
         if summary:
             contexts.insert(0, {"id": "session_summary", "text": summary, "source": "session_summary"})
-
-        gen = generate_answer(req.message, contexts, max_tokens=512, temperature=0.0)
-        text = gen["text"]
+        gen = generate_answer(req.message, contexts, max_tokens=512, temperature=0.0, short_answer=bool(req.short_answer))
+        text = gen["text"].strip()
         emotion = classify_emotion(text)
-
-        # Save assistant turn
         append_turn(req.session_id, "assistant", text)
-
         citations = [{"id": c["id"], "source": c["source"]} for c in contexts if c.get("id") != "session_summary"]
-
-        return ChatResponse(session_id=req.session_id, text=text, emotion=emotion, citations=citations)
+        return {"session_id": req.session_id, "text": text, "emotion": emotion, "citations": citations}
     except Exception as e:
         logger.exception("Chat /chat failed.")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/docs/list")
-async def docs_list(limit: int = 200):
-    """
-    Return a list of indexed documents (source + snippet).
-    Response: { "docs": [ { "source": "...", "snippet": "..." }, ... ] }
-    """
-    try:
-        # Use the retriever helper to page Qdrant and deduplicate sources
-        docs = retriever.list_documents(limit=limit, batch_size=200)
-        # return a plain dict (FastAPI will serialize to JSON)
-        return {"docs": docs}
-    except Exception as e:
-        logger.exception("Docs list failed")
-        # return a standard error response
-        raise HTTPException(status_code=500, detail=str(e))
 
-
-
-@app.post("/docs/upload")
-async def docs_upload(file: UploadFile = File(...)):
+# ---- STT endpoint ----
+@app.post("/stt")
+async def stt_endpoint(file: UploadFile = File(...), email: Optional[str] = Form(None)):
     """
-    Accept a single file, ingest into Qdrant, and return upserted chunks count.
-    Example response: {"upserted_chunks": 42}
+    Accepts audio file upload as multipart/form-data.
+    Writes to a temp file with correct suffix and calls Groq STT with a file handle (per SDK examples).
+    Returns plain transcript text.
     """
     try:
         contents = await file.read()
-        # upsert_file_bytes writes a temp file, chunks, embeds, and upserts to Qdrant
-        res = upsert_file_bytes(contents, file.filename, collection_name=settings.qdrant_collection)
-        # Return the result dict produced by upsert_file_bytes (e.g., {"upserted_chunks": N})
-        return res
+        # choose suffix from uploaded filename or fallback to .wav
+        suffix = "." + file.filename.split(".")[-1] if "." in file.filename else ".wav"
+        # ensure suffix is valid for Groq: flac mp3 mp4 mpeg mpga m4a ogg opus wav webm
+        allowed = {"flac","mp3","mp4","mpeg","mpga","m4a","ogg","opus","wav","webm"}
+        if suffix.lstrip(".").lower() not in allowed:
+            # coerce to wav
+            suffix = ".wav"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(contents)
+            tmp.flush()
+            tmp_path = tmp.name
+
+        try:
+            transcript = groq_stt_transcribe_from_file(tmp_path)
+            return PlainTextResponse(transcript)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
     except Exception as e:
-        logger.exception("Document upload failed.")
+        logger.exception("STT endpoint failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---- TTS endpoint ----
+@app.post("/tts")
+async def tts_endpoint(body: Dict[str, Any] = Body(...)):
+    """
+    POST JSON body: { "text": "...", "voice": "Fritz-PlayAI", "format": "wav" }
+    Returns audio stream with appropriate media type.
+    """
+    text = body.get("text")
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing 'text' in request body.")
+    voice = body.get("voice") or "Fritz-PlayAI"
+    fmt = (body.get("format") or "wav").lower()
+    if fmt not in ("wav", "mp3"):
+        fmt = "wav"
+    try:
+        tmp_path = groq_tts_synthesize_to_file(text=text, voice=voice, response_format=fmt)
+        # stream the file
+        media_type = "audio/wav" if fmt == "wav" else "audio/mpeg"
+        return StreamingResponse(open(tmp_path, "rb"), media_type=media_type)
+    except Exception as e:
+        logger.exception("TTS endpoint failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Note: do not delete tmp_path immediately; StreamingResponse will read it.
+        # Consider background cleanup for production. Here we leave the file for OS cleanup or explicit cleanup later.
+        pass
+
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=False)
+    uvicorn.run("app.main:app", host=getattr(settings, "host", "0.0.0.0"), port=getattr(settings, "port", 8000), reload=False)

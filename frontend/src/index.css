@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --glass-bg: rgba(255,255,255,0.14);
+  --glass-border: rgba(255,255,255,0.25);
+}
+.dark:root {
+  --glass-bg: rgba(17,24,39,0.5);
+  --glass-border: rgba(255,255,255,0.08);
+}
+
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(16px);
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-2xl px-6 py-3 font-semibold text-white shadow-lg transition-transform;
+  background: linear-gradient(135deg, #06b6d4 0%, #7c3aed 100%);
+}
+.btn-primary:hover { transform: translateY(-2px) scale(1.02); }
+
+.btn-ghost {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-medium transition-colors;
+  @apply bg-black/5 dark:bg-white/5 text-black dark:text-white;
+}
+.btn-ghost:hover { @apply bg-black/10 dark:bg-white/10; }
+
+.icon-btn {
+  @apply p-3 rounded-full bg-white/70 dark:bg-zinc-900/70 shadow-md hover:scale-105 transition;
+}
+
+.drag-border {
+  border: 2px dashed rgba(124,58,237,0.5);
+}

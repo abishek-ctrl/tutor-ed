@@ -10,9 +10,13 @@ from qdrant_client.http.models import PointStruct, Distance, VectorParams
 import tiktoken
 import uuid
 from app.core.config import settings
+from datetime import datetime
+import tempfile
+import logging
+
+logger = logging.getLogger("rag.ingest")
 
 ENC = tiktoken.get_encoding("cl100k_base")  # token counting
-
 MODEL = SentenceTransformer(settings.embedding_model)
 
 
@@ -27,8 +31,11 @@ def _read_text_from_file(path: Path) -> str:
     elif suffix in {".md", ".txt"}:
         return path.read_text(encoding="utf-8")
     else:
-        # fallback: treat binary as text
-        return path.read_text(encoding="utf-8", errors="ignore")
+        # Try to read as text (for csv, docx -> you may plug docx parser here)
+        try:
+            return path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
 
 
 def _token_len(text: str) -> int:
@@ -36,39 +43,28 @@ def _token_len(text: str) -> int:
 
 
 def chunk_text(text: str, chunk_size: int = 600, overlap: int = 64) -> List[str]:
-    """
-    Chunk text into token-aware chunks with overlap.
-    Uses simple sentence boundary segmentation for stability.
-    """
-    # Basic normalization
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []
-
-    # Split roughly on sentences to be token-aware
-    # This is a pragmatic sentence split (not language-perfect)
+    # Simple sentence-aware split
     sentences = re.split(r'(?<=[.!?])\s+', text)
-
     chunks = []
     current = []
     current_tokens = 0
-
     for sent in sentences:
         sent_tokens = _token_len(sent)
         if current_tokens + sent_tokens <= chunk_size:
             current.append(sent)
             current_tokens += sent_tokens
         else:
-            # flush current
             if current:
                 chunks.append(" ".join(current).strip())
-            # if single sentence > chunk_size, break it deterministically
             if sent_tokens > chunk_size:
-                # break by characters into subpieces keeping token size
+                # break large sentence by tokens
                 start = 0
-                sent_enc = ENC.encode(sent)
-                while start < len(sent_enc):
-                    piece_enc = sent_enc[start:start + chunk_size]
+                enc = ENC.encode(sent)
+                while start < len(enc):
+                    piece_enc = enc[start:start + chunk_size]
                     piece = ENC.decode(piece_enc)
                     chunks.append(piece.strip())
                     start += chunk_size - overlap
@@ -77,61 +73,33 @@ def chunk_text(text: str, chunk_size: int = 600, overlap: int = 64) -> List[str]
             else:
                 current = [sent]
                 current_tokens = sent_tokens
-
     if current:
         chunks.append(" ".join(current).strip())
     return chunks
 
 
 def embed_texts(texts: Iterable[str]) -> List[List[float]]:
-    # SentenceTransformer returns dense vectors (float32)
     vectors = MODEL.encode(list(texts), show_progress_bar=False, convert_to_numpy=True)
     return vectors.tolist()
 
-from io import BytesIO
-from pathlib import Path
-import tempfile
 
-def upsert_file_bytes(file_bytes: bytes, filename: str,
-                      collection_name: str = settings.qdrant_collection,
-                      chunk_size: int = settings.chunk_token_size,
-                      overlap: int = settings.chunk_overlap) -> dict:
+def _get_qdrant_client(prefer_grpc: bool = False) -> QdrantClient:
+    return QdrantClient(url=str(settings.qdrant_url), api_key=settings.qdrant_api_key, prefer_grpc=prefer_grpc)
+
+
+def upsert_documents(paths: List[str],
+                     collection_name: str = settings.qdrant_collection,
+                     chunk_size: int = settings.chunk_token_size,
+                     overlap: int = settings.chunk_overlap,
+                     metadata_overrides: Dict = None) -> Dict[str, int]:
     """
-    Accept raw file bytes (uploaded via HTTP), write to a temp file, and ingest similarly to upsert_documents.
-    Supports pdf, md, txt.
-    Returns dict with upserted_chunks count.
+    Existing helper: ingest files from disk paths. Keeps behavior backward compatible.
     """
-    # write to a temporary file with appropriate suffix
-    suffix = Path(filename).suffix or ".txt"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(file_bytes)
-        tmp.flush()
-        tmp_path = Path(tmp.name)
-
-    try:
-        # reuse upsert_documents logic by passing the temp path
-        result = upsert_documents([str(tmp_path)], collection_name=collection_name,
-                                  chunk_size=chunk_size, overlap=overlap)
-        return result
-    finally:
-        try:
-            tmp_path.unlink()
-        except Exception:
-            pass
-
-def upsert_documents(
-    paths: List[str],
-    collection_name: str = settings.qdrant_collection,
-    chunk_size: int = settings.chunk_token_size,
-    overlap: int = settings.chunk_overlap,
-) -> Dict[str, int]:
-    client = QdrantClient(url=str(settings.qdrant_url), api_key=settings.qdrant_api_key, prefer_grpc=False)
-
-    # Ensure collection exists with vector size
+    client = _get_qdrant_client(prefer_grpc=False)
     example_vec = MODEL.encode("example", convert_to_numpy=True)
     dim = int(example_vec.shape[0])
 
-    # Create collection if not exists
+    # Create collection if not exists (idempotent recreation uses recreate_collection)
     try:
         client.get_collection(collection_name)
     except Exception:
@@ -151,21 +119,62 @@ def upsert_documents(
             continue
 
         embeddings = embed_texts(chunks)
-
         points = []
         for idx, (chunk, vec) in enumerate(zip(chunks, embeddings)):
             chunk_id = str(uuid.uuid4())
             payload = {
                 "source": p.name,
                 "source_path": str(p.resolve()),
+                "file_name": p.name,
                 "chunk_index": idx,
                 "text": chunk,
             }
-            # Qdrant PointStruct
+            if metadata_overrides:
+                payload.update(metadata_overrides)
             points.append(PointStruct(id=chunk_id, vector=vec, payload=payload))
             uploaded += 1
 
-        # Upsert batch (Qdrant helper ensures batching)
         client.upsert(collection_name=collection_name, points=points)
-
     return {"upserted_chunks": uploaded}
+
+
+def upsert_file_bytes(file_bytes: bytes,
+                      filename: str,
+                      email: str = None,
+                      collection_name: str = settings.qdrant_collection,
+                      chunk_size: int = settings.chunk_token_size,
+                      overlap: int = settings.chunk_overlap) -> Dict[str, int]:
+    """
+    Accept raw bytes (uploaded file), write to temp file, and ingest.
+    Stores metadata: email, file_name, uploaded_at.
+    Returns: {'upserted_chunks': N}
+    """
+    suffix = Path(filename).suffix or ".txt"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp.flush()
+        tmp_path = Path(tmp.name)
+
+    try:
+        metadata_overrides = {
+            "email": email,
+            "file_name": filename,
+            "uploaded_at": datetime.utcnow().isoformat() + "Z"
+        }
+        return upsert_documents([str(tmp_path)], collection_name=collection_name, chunk_size=chunk_size, overlap=overlap, metadata_overrides=metadata_overrides)
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            logger.exception("Failed to remove temporary file %s", tmp_path)
+
+
+def upsert_multiple_files(files: List[Dict], email: str = None, collection_name: str = settings.qdrant_collection):
+    """
+    files: list of {'bytes': b'...', 'filename': 'name.pdf'}
+    """
+    total = 0
+    for f in files:
+        res = upsert_file_bytes(f['bytes'], f['filename'], email=email, collection_name=collection_name)
+        total += res.get("upserted_chunks", 0)
+    return {"upserted_chunks": total}
