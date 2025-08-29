@@ -23,7 +23,8 @@ export async function uploadDocs(email: string, files: File[]) {
 }
 
 export async function deleteUserDocs(email: string) {
-  const res = await fetch(`${API_BASE}/docs/delete?email=${encodeURIComponent(email)}`, { method: 'DELETE' })
+  const url = `${API_BASE}/docs/delete?email=${encodeURIComponent(email)}`
+  const res = await fetch(url, { method: 'DELETE' })
   if (!res.ok) throw new Error(await res.text())
   return res.json().catch(()=>({}))
 }

@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 from dataclasses import dataclass
 from app.core.config import settings
@@ -47,53 +47,48 @@ class QdrantRetriever:
     def _normalize_scroll_points(self, points_raw) -> List[Any]:
         """
         Normalize different qdrant-client scroll return shapes into a flat list of point-like objects.
-        Handles:
-         - list of ScoredPoint / Point structs
-         - dict wrappers like {"result": [...]} or {"points": [...]}
-         - nested lists (e.g. [[...], [...]])
-         - dicts that contain 'result' or 'points'
         """
         if points_raw is None:
             return []
-        # dict wrappers
-        if isinstance(points_raw, dict):
-            if "result" in points_raw and isinstance(points_raw["result"], list):
-                return points_raw["result"]
-            if "points" in points_raw and isinstance(points_raw["points"], list):
-                return points_raw["points"]
-        # if list
+        # The scroll API response is a tuple: (list_of_points, next_page_offset)
+        if isinstance(points_raw, tuple) and len(points_raw) > 0 and isinstance(points_raw[0], list):
+            return points_raw[0]
         if isinstance(points_raw, list):
-            # Flatten one level if nested lists
-            if points_raw and all(isinstance(x, list) for x in points_raw):
-                flat = []
-                for sub in points_raw:
-                    flat.extend(sub)
-                return flat
             return points_raw
-        # fallback: single object -> wrap
         return [points_raw]
 
-    def list_documents(self, email: Optional[str] = None, limit: int = 1000, batch_size: int = 200) -> List[Dict[str, Any]]:
+
+    def list_documents(self, email: Optional[str] = None, limit: int = 1000, batch_size: int = 50) -> List[Dict[str, Any]]:
         """
         Page through Qdrant collection and return a list of unique document sources with a short snippet.
         If email is provided, only return documents where payload.email == email.
-        Returns list of {"source": str, "snippet": str, "email": str|None}
         """
         unique: Dict[str, Dict[str, Any]] = {}
-        offset = 0
+        offset = None # Start with None for the first request
 
-        # Defensive: ensure scroll exists
-        scroll_fn = getattr(self.client, "scroll", None)
-        if scroll_fn is None:
-            raise RuntimeError("Qdrant client does not support scroll(); please upgrade qdrant-client.")
+        # Define the filter
+        scroll_filter = None
+        if email:
+            logger.info(f"Filtering documents for email: {email}")
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="email",
+                        match=models.MatchValue(value=email),
+                    )
+                ]
+            )
 
         while True:
             try:
-                try:
-                    raw_points = self.client.scroll(collection_name=self.collection, limit=batch_size, offset=offset)
-                except TypeError:
-                    # fallback to positional signature
-                    raw_points = self.client.scroll(self.collection, limit=batch_size, offset=offset)
+                # The scroll method returns a tuple: (points, next_page_offset)
+                raw_points, next_offset = self.client.scroll(
+                    collection_name=self.collection,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=True,
+                    scroll_filter=scroll_filter
+                )
             except Exception as e:
                 logger.exception("Failed to scroll Qdrant collection: %s", e)
                 break
@@ -103,36 +98,23 @@ class QdrantRetriever:
                 break
 
             for p in points:
-                payload = {}
-                try:
-                    if hasattr(p, "payload"):
-                        payload = p.payload or {}
-                    elif isinstance(p, dict):
-                        payload = p.get("payload") or {}
-                    else:
-                        payload = getattr(p, "payload", {}) or {}
-                except Exception:
-                    payload = {}
+                payload = p.payload or {}
+                p_email = payload.get("email")
+                # This log helps confirm the email in the document payload
+                logger.debug(f"Found document with email in payload: {p_email}")
 
-                # filter by email if provided
-                if email:
-                    p_email = payload.get("email")
-                    if not p_email or str(p_email).lower() != str(email).lower():
-                        continue
-
-                source = payload.get("file_name") or payload.get("source") or payload.get("source_path") or "unknown"
-                if not isinstance(source, str):
-                    source = str(source)
-                snippet = (payload.get("text") or "")[:500]
+                source = payload.get("file_name") or payload.get("source") or "unknown"
+                snippet = (payload.get("text") or "")[:200]
 
                 if source not in unique:
-                    unique[source] = {"source": source, "snippet": snippet, "email": payload.get("email")}
+                    unique[source] = {"source": source, "snippet": snippet, "email": p_email}
                 if len(unique) >= limit:
                     break
-
-            offset += len(points)
-            if len(points) < batch_size or len(unique) >= limit:
+            
+            offset = next_offset # Use the offset for the next page
+            if not offset or len(unique) >= limit:
                 break
-
-        docs = list(unique.values())[:limit]
+        
+        docs = list(unique.values())
+        logger.info(f"Found {len(docs)} unique documents for email {email}.")
         return docs

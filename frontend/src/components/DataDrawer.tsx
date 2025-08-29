@@ -15,8 +15,16 @@ export default function DataDrawer({ open, onClose, email }: Props) {
   const [busy, setBusy] = useState(false)
 
   async function refresh() {
-    const d = await listUserDocs(email)
-    setDocs(d)
+    setBusy(true)
+    try {
+        const d = await listUserDocs(email)
+        console.log("Fetched docs:", d); // DEBUG: Check what the API returns
+        setDocs(d)
+    } catch (e:any) {
+        alert('Failed to refresh documents: ' + e.message)
+    } finally {
+        setBusy(false)
+    }
   }
   useEffect(()=>{ if (open) refresh() }, [open])
 
@@ -60,7 +68,7 @@ export default function DataDrawer({ open, onClose, email }: Props) {
 
             <div className="mt-6">
               <h4 className="font-semibold mb-2">Indexed documents</h4>
-              <button className="btn-ghost mb-2" onClick={refresh}>Refresh</button>
+              <button className="btn-ghost mb-2" onClick={refresh} disabled={busy}>Refresh</button>
               <ul className="space-y-2">
                 {docs.map((d:any, i:number)=>(
                   <li key={i} className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-900">
@@ -68,7 +76,8 @@ export default function DataDrawer({ open, onClose, email }: Props) {
                     {d.snippet && <div className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{d.snippet}</div>}
                   </li>
                 ))}
-                {docs.length===0 && <div className="text-sm text-zinc-500">No documents yet.</div>}
+                {docs.length===0 && !busy && <div className="text-sm text-zinc-500">No documents yet.</div>}
+                {busy && <div className="text-sm text-zinc-500">Loading...</div>}
               </ul>
             </div>
           </motion.div>

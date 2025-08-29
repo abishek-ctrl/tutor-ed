@@ -6,6 +6,7 @@ from pathlib import Path
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
+from qdrant_client.http import models
 from qdrant_client.http.models import PointStruct, Distance, VectorParams
 import tiktoken
 import uuid
@@ -107,6 +108,13 @@ def upsert_documents(paths: List[str],
             collection_name,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
         )
+        # ** ADDED THIS BLOCK TO CREATE THE INDEX **
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name="email",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+
 
     uploaded = 0
     for path_str in paths:
