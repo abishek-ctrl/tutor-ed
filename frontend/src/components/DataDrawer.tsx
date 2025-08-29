@@ -5,7 +5,7 @@ import { listUserDocs, uploadDocs } from '../services/api'
 
 type Props = {
   open: boolean
-  onClose: ()=>void
+  onClose: () => void
   email: string
 }
 
@@ -17,16 +17,16 @@ export default function DataDrawer({ open, onClose, email }: Props) {
   async function refresh() {
     setBusy(true)
     try {
-        const d = await listUserDocs(email)
-        console.log("Fetched docs:", d); // DEBUG: Check what the API returns
-        setDocs(d)
-    } catch (e:any) {
-        alert('Failed to refresh documents: ' + e.message)
+      const d = await listUserDocs(email)
+      setDocs(d)
+    } catch (e: any) {
+      alert('Failed to refresh documents: ' + e.message)
     } finally {
-        setBusy(false)
+      setBusy(false)
     }
   }
-  useEffect(()=>{ if (open) refresh() }, [open])
+
+  useEffect(() => { if (open) refresh() }, [open])
 
   async function doUpload() {
     if (!queue.length) return
@@ -36,7 +36,7 @@ export default function DataDrawer({ open, onClose, email }: Props) {
       setQueue([])
       await refresh()
       alert('Uploaded and indexed successfully.')
-    } catch (e:any) {
+    } catch (e: any) {
       alert('Upload failed: ' + e.message)
     } finally {
       setBusy(false)
@@ -46,38 +46,53 @@ export default function DataDrawer({ open, onClose, email }: Props) {
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-40" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>
-          <div className="absolute inset-0 bg-black/40" onClick={onClose}/>
-          <motion.div initial={{x:400}} animate={{x:0}} exit={{x:400}}
-            className="absolute right-0 top-0 h-full w-full max-w-md p-6 bg-white dark:bg-zinc-950 shadow-2xl overflow-y-auto">
+        <motion.div
+          className="fixed inset-0 z-50"
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur" onClick={onClose} />
+
+          <motion.div
+            className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-slate-900 text-white shadow-2xl p-6 overflow-y-auto"
+            initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+            transition={{ type: 'spring', stiffness: 220, damping: 26 }}
+          >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">My Data</h3>
-              <button className="btn-ghost" onClick={onClose}>Close</button>
+              <button onClick={onClose} className="btn-ghost">Close</button>
             </div>
 
             <div className="mb-6">
-              <h4 className="font-semibold mb-2">Upload more</h4>
-              <UploadZone onFiles={(f)=>setQueue(prev=>[...prev, ...f])} />
-              <ul className="text-sm text-zinc-600 dark:text-zinc-300 max-h-32 overflow-auto mt-2">
-                {queue.map((f,i)=>(<li key={i} className="truncate py-1">{f.name}</li>))}
-              </ul>
-              <button disabled={busy || queue.length===0} onClick={doUpload} className="mt-3 btn-primary rounded-2xl disabled:opacity-50">
+              <div className="text-sm mb-2">Upload more</div>
+              <UploadZone onFiles={(f) => setQueue(prev => [...prev, ...f])} />
+              {queue.length > 0 && (
+                <div className="mt-2 text-xs text-white/70">
+                  Selected: {queue.map((f, i) => <span key={i} className="mr-2">{f.name}</span>)}
+                </div>
+              )}
+              <button
+                onClick={doUpload}
+                disabled={busy || queue.length === 0}
+                className="mt-3 btn-primary disabled:opacity-50"
+              >
                 {busy ? 'Indexing…' : 'Upload & Index'}
               </button>
             </div>
 
-            <div className="mt-6">
-              <h4 className="font-semibold mb-2">Indexed documents</h4>
-              <button className="btn-ghost mb-2" onClick={refresh} disabled={busy}>Refresh</button>
-              <ul className="space-y-2">
-                {docs.map((d:any, i:number)=>(
-                  <li key={i} className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-900">
-                    <div className="font-medium">{d.source}</div>
-                    {d.snippet && <div className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{d.snippet}</div>}
+            <div className="border-t border-white/10 pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-medium">Indexed documents</h4>
+                <button onClick={refresh} className="btn-ghost text-xs">Refresh</button>
+              </div>
+              {busy && <div className="text-sm text-white/70">Loading…</div>}
+              {!busy && docs.length === 0 && <div className="text-sm text-white/60">No documents yet.</div>}
+              <ul className="space-y-2 mt-2">
+                {docs.map((d: any, i: number) => (
+                  <li key={i} className="p-3 rounded-xl bg-white/5 border border-white/10">
+                    <div className="text-sm font-mono">{d.source}</div>
+                    {d.snippet && <div className="text-xs text-white/70 mt-1">{d.snippet}</div>}
                   </li>
                 ))}
-                {docs.length===0 && !busy && <div className="text-sm text-zinc-500">No documents yet.</div>}
-                {busy && <div className="text-sm text-zinc-500">Loading...</div>}
               </ul>
             </div>
           </motion.div>
