@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # Qdrant
     qdrant_url: AnyUrl = Field(..., env="QDRANT_URL")
     qdrant_api_key: str = Field(..., env="QDRANT_API_KEY")
-    qdrant_collection: str = Field("ai_tutor_default", env="QDRANT_COLLECTION")
+    qdrant_collection_prefix: str = Field("ai_tutor", env="QDRANT_COLLECTION_PREFIX")
 
     # Redis
     redis_url: str = Field(..., env="REDIS_URL")

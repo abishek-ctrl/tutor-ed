@@ -89,18 +89,15 @@ def _get_qdrant_client(prefer_grpc: bool = False) -> QdrantClient:
 
 
 def upsert_documents(paths: List[str],
-                     collection_name: str = settings.qdrant_collection,
+                     collection_name: str,
                      chunk_size: int = settings.chunk_token_size,
                      overlap: int = settings.chunk_overlap,
                      metadata_overrides: Dict = None) -> Dict[str, int]:
-    """
-    Existing helper: ingest files from disk paths. Keeps behavior backward compatible.
-    """
     client = _get_qdrant_client(prefer_grpc=False)
     example_vec = MODEL.encode("example", convert_to_numpy=True)
     dim = int(example_vec.shape[0])
 
-    # Create collection if not exists (idempotent recreation uses recreate_collection)
+    # Create collection if not exists
     try:
         client.get_collection(collection_name)
     except Exception:
@@ -108,13 +105,6 @@ def upsert_documents(paths: List[str],
             collection_name,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
         )
-        # ** ADDED THIS BLOCK TO CREATE THE INDEX **
-        client.create_payload_index(
-            collection_name=collection_name,
-            field_name="email",
-            field_schema=models.PayloadSchemaType.KEYWORD,
-        )
-
 
     uploaded = 0
     for path_str in paths:
@@ -148,15 +138,10 @@ def upsert_documents(paths: List[str],
 
 def upsert_file_bytes(file_bytes: bytes,
                       filename: str,
-                      email: str = None,
-                      collection_name: str = settings.qdrant_collection,
+                      email: str,
+                      collection_name: str,
                       chunk_size: int = settings.chunk_token_size,
                       overlap: int = settings.chunk_overlap) -> Dict[str, int]:
-    """
-    Accept raw bytes (uploaded file), write to temp file, and ingest.
-    Stores metadata: email, file_name, uploaded_at.
-    Returns: {'upserted_chunks': N}
-    """
     suffix = Path(filename).suffix or ".txt"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(file_bytes)
@@ -175,14 +160,3 @@ def upsert_file_bytes(file_bytes: bytes,
             tmp_path.unlink()
         except Exception:
             logger.exception("Failed to remove temporary file %s", tmp_path)
-
-
-def upsert_multiple_files(files: List[Dict], email: str = None, collection_name: str = settings.qdrant_collection):
-    """
-    files: list of {'bytes': b'...', 'filename': 'name.pdf'}
-    """
-    total = 0
-    for f in files:
-        res = upsert_file_bytes(f['bytes'], f['filename'], email=email, collection_name=collection_name)
-        total += res.get("upserted_chunks", 0)
-    return {"upserted_chunks": total}

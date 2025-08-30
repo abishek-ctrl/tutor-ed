@@ -29,7 +29,7 @@ export default function App() {
   }, [user])
 
   if (!user) return <EntryScreen onSubmit={(u)=>{ setUser(u); localStorage.setItem('ai_tutor_user', JSON.stringify(u)) }} />
-  if (hasData === null) return <div className="h-screen flex items-center justify-center text-gray-500">Checking your knowledge base…</div>
+  if (hasData === null) return <div className="h-screen flex items-center justify-center bg-zinc-900 text-zinc-400 font-sans">Checking your knowledge base…</div>
   if (!hasData) return <RagInit user={user} onComplete={()=>setHasData(true)} />
   return <MascotPage user={user} />
 }

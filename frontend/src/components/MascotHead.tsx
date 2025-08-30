@@ -1,321 +1,347 @@
-import React, { useEffect } from 'react'
-import { motion, useAnimation } from 'framer-motion'
+import React, { useEffect } from 'react';
+import { motion, useAnimation } from 'framer-motion';
 
-export type UIEmotion = 'smiling' | 'thinking' | 'speaking' | 'sad'
+export type UIEmotion =
+  | 'smiling'
+  | 'thinking'
+  | 'speaking'
+  | 'sad'
+  | 'celebrate';     // 🆕 little confetti burst when you pass tests etc.
 
 interface Props {
-  emotion?: UIEmotion
-  speaking?: boolean
-  className?: string
+  emotion?: UIEmotion;
+  speaking?: boolean;
+  className?: string;
 }
 
-export default function MascotHead({ emotion = 'smiling', speaking = false, className = "" }: Props) {
-  const floatCtrls = useAnimation()
-  const blinkCtrls = useAnimation()
-  const browCtrls = useAnimation()
-  const earCtrls = useAnimation()
-  const jawCtrls = useAnimation()
+/* Design tokens – keep them here so branding is easy */
+const TOKENS = {
+  black: '#151515',
+  pink:  '#F7AEC8',
+  blue:  '#8FD6FF',
+  stroke:'#1F1F1F',
+};
 
-  // Respect reduced motion preference
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+export default function MascotHead({
+  emotion = 'smiling',
+  speaking = false,
+  className = '',
+}: Props) {
+  /* ───────── animation ctrls ───────── */
+  const floatCtrls  = useAnimation();
+  const blinkCtrls  = useAnimation();
+  const browCtrls   = useAnimation();
+  const earCtrls    = useAnimation();
+  const jawCtrls    = useAnimation();
+  const headBobCtrl = useAnimation();
+  const confetti    = useAnimation();
 
-  // Floating animation when speaking
+  const prefersReducedMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  ).matches;
+
+  /* Floating idle */
   useEffect(() => {
-    if (speaking && !prefersReducedMotion) {
-      floatCtrls.start({ 
-        y: [0, -8, 0], 
-        transition: { duration: 2, ease: "easeInOut", repeat: Infinity } 
-      })
-    } else {
-      floatCtrls.start({ y: 0, transition: { duration: 0.3 } })
+    if (!prefersReducedMotion) {
+      floatCtrls.start({
+        y: [0, -4, 0],
+        transition: { duration: 4, ease: 'easeInOut', repeat: Infinity },
+      });
     }
-  }, [speaking, floatCtrls, prefersReducedMotion])
+  }, [prefersReducedMotion, floatCtrls]);
 
-  // Natural blinking
+  /* Blinks */
   useEffect(() => {
-    if (prefersReducedMotion) return
-    
-    let live = true
-    ;(async () => {
+    if (prefersReducedMotion) return;
+    let live = true;
+    (async () => {
       while (live) {
-        await new Promise(r => setTimeout(r, Math.random() * 3000 + 2500))
+        await new Promise((r) =>
+          setTimeout(r, Math.random() * 2000 + 2000),
+        );
         if (live && emotion !== 'sad') {
-          await blinkCtrls.start({ 
-            scaleY: [1, 0.1, 1], 
-            transition: { duration: 0.15 } 
-          })
+          await blinkCtrls.start({
+            scaleY: [1, 0.05, 1],
+            transition: { duration: 0.12 },
+          });
         }
       }
-    })()
-    return () => { live = false }
-  }, [blinkCtrls, emotion, prefersReducedMotion])
+    })();
+    return () => {
+      live = false;
+    };
+  }, [emotion, prefersReducedMotion, blinkCtrls]);
 
-  // Eyebrow animation for thinking
+  /* Eyebrows – higher when thinking */
   useEffect(() => {
-    if (emotion === 'thinking' && !prefersReducedMotion) {
-      browCtrls.start({ 
-        y: -3,
-        transition: { duration: 0.25 } 
-      })
-    } else {
-      browCtrls.start({ y: 0, transition: { duration: 0.25 } })
-    }
-  }, [emotion, browCtrls, prefersReducedMotion])
+    browCtrls.start({
+      y: emotion === 'thinking' ? -6 : 0,
+      transition: { duration: 0.25 },
+    });
+  }, [emotion, browCtrls]);
 
-  // Ear wiggle for thinking
+  /* Ear wiggle – subtle while thinking */
   useEffect(() => {
     if (emotion === 'thinking' && !prefersReducedMotion) {
       earCtrls.start({
         rotate: [-3, 3, -3],
-        transition: { duration: 1.4, ease: "easeInOut", repeat: Infinity }
-      })
+        transition: { duration: 1.4, repeat: Infinity, ease: 'easeInOut' },
+      });
     } else {
-      earCtrls.start({ rotate: 0, transition: { duration: 0.3 } })
+      earCtrls.start({ rotate: 0, transition: { duration: 0.25 } });
     }
-  }, [emotion, earCtrls, prefersReducedMotion])
+  }, [emotion, earCtrls, prefersReducedMotion]);
 
-  // Jaw movement for speaking
+  /* Jaw + head-bob while speaking */
   useEffect(() => {
     if (speaking && emotion === 'speaking' && !prefersReducedMotion) {
-      jawCtrls.start({ 
-        y: [0, 3, 0], 
-        transition: { duration: 0.5, repeat: Infinity, ease: "easeInOut" } 
-      })
+      jawCtrls.start({
+        y: [0, 6, 0],
+        transition: { duration: 0.45, repeat: Infinity, ease: 'easeInOut' },
+      });
+      headBobCtrl.start({
+        rotate: [0, 2, -2, 0],
+        transition: { duration: 2, repeat: Infinity, ease: 'easeInOut' },
+      });
     } else {
-      jawCtrls.start({ y: 0, transition: { duration: 0.2 } })
+      jawCtrls.start({ y: 0, transition: { duration: 0.15 } });
+      headBobCtrl.start({ rotate: 0, transition: { duration: 0.3 } });
     }
-  }, [speaking, emotion, jawCtrls, prefersReducedMotion])
+  }, [speaking, emotion, jawCtrls, headBobCtrl, prefersReducedMotion]);
 
-  // Mouth shapes based on emotion - much more pronounced
-  const getMouthPath = () => {
-    switch (emotion) {
-      case 'smiling':
-        return "M82 142 Q100 160 118 142"
-      case 'thinking':
-        return "M90 148 L110 148"
-      case 'sad':
-        return "M82 155 Q100 142 118 155"
-      default:
-        return "M82 142 Q100 160 118 142"
+  /* Confetti burst for 'celebrate' */
+  useEffect(() => {
+    if (emotion === 'celebrate') {
+      confetti.set({ opacity: 1, scale: 0 });
+      confetti.start({
+        scale: [0, 1.2],
+        opacity: [1, 0],
+        transition: { duration: 1 },
+      });
     }
-  }
+  }, [emotion, confetti]);
+
+  /* Mouth paths */
+  const mouthFor = (e: UIEmotion) => {
+    switch (e) {
+      case 'smiling':
+        return 'M70 150 Q100 175 130 150';
+      case 'thinking':
+        return 'M80 152 L120 152';
+      case 'sad':
+        return 'M70 160 Q100 135 130 160';
+      default:
+        return 'M70 150 Q100 175 130 150';
+    }
+  };
 
   const mouthVariants = {
-    static: { 
-      d: getMouthPath(),
-      transition: { duration: 0.2 }
-    },
-    talking: { 
+    static: { d: mouthFor(emotion), transition: { duration: 0.15 } },
+    talking: {
       d: [
-        "M78 148 Q100 175 122 148", // Wide open
-        "M85 145 Q100 165 115 145", // Medium
-        "M88 143 Q100 155 112 143", // Small
-        "M85 145 Q100 165 115 145", // Medium
+        'M68 149 Q100 180 132 149',
+        'M75 149 Q100 168 125 149',
+        'M82 149 Q100 158 118 149',
       ],
-      transition: { duration: 0.5, ease: "easeInOut", repeat: Infinity }
-    }
-  }
+      transition: {
+        duration: 0.6,
+        ease: 'easeInOut',
+        repeat: Infinity,
+      },
+    },
+  };
 
   return (
-    <motion.div animate={floatCtrls} className={className}>
-      <svg viewBox="0 0 200 200" style={{ width: 280, height: 280 }}>
-        {/* Main head - perfect circle */}
-        <circle 
-          cx="100" 
-          cy="100" 
-          r="65" 
-          fill="#FFFFFF" 
-          stroke="#E8E8E8" 
-          strokeWidth="1.5"
-        />
-
-        {/* Left ear - more natural position and size */}
-        <motion.circle 
-          cx="68" 
-          cy="58" 
-          r="22" 
-          fill="#1a1a1a"
-          animate={earCtrls}
-        />
-        
-        {/* Right ear */}
-        <motion.circle 
-          cx="132" 
-          cy="58" 
-          r="22" 
-          fill="#1a1a1a"
-          animate={earCtrls}
-        />
-
-        {/* Inner ears - more subtle pink */}
-        <motion.circle 
-          cx="68" 
-          cy="60" 
-          r="9" 
-          fill="#F5A5B8"
-          animate={earCtrls}
-        />
-        <motion.circle 
-          cx="132" 
-          cy="60" 
-          r="9" 
-          fill="#F5A5B8"
-          animate={earCtrls}
-        />
-
-        {/* Eye patches - more natural teardrop shapes */}
-        <ellipse 
-          cx="76" 
-          cy="88" 
-          rx="19" 
-          ry="26" 
-          fill="#1a1a1a"
-          transform="rotate(-12 76 88)"
-        />
-        
-        <ellipse 
-          cx="124" 
-          cy="88" 
-          rx="19" 
-          ry="26" 
-          fill="#1a1a1a"
-          transform="rotate(12 124 88)"
-        />
-
-        {/* Eye whites - slightly larger */}
-        <ellipse cx="76" cy="90" rx="13" ry="11" fill="#FFFFFF" />
-        <ellipse cx="124" cy="90" rx="13" ry="11" fill="#FFFFFF" />
-
-        {/* Pupils */}
-        <motion.circle 
-          cx="76" 
-          cy="92" 
-          r={emotion === 'sad' ? "4.5" : "6.5"} 
-          fill="#1a1a1a"
-          animate={blinkCtrls}
-          style={{ originY: 0.5 }}
-        />
-        <motion.circle 
-          cx="124" 
-          cy="92" 
-          r={emotion === 'sad' ? "4.5" : "6.5"} 
-          fill="#1a1a1a"
-          animate={blinkCtrls}
-          style={{ originY: 0.5 }}
-        />
-
-        {/* Eye highlights */}
-        <circle cx="78" cy="89" r="2.5" fill="#FFFFFF" opacity="0.9" />
-        <circle cx="126" cy="89" r="2.5" fill="#FFFFFF" opacity="0.9" />
-
-        {/* Eyebrows for thinking */}
-        {emotion === 'thinking' && (
-          <motion.g animate={browCtrls}>
-            <path 
-              d="M62 76 Q76 70 90 76" 
-              stroke="#4a4a4a" 
-              strokeWidth="3" 
-              fill="none" 
-              strokeLinecap="round"
+    <motion.div
+      animate={floatCtrls}
+      className={className}
+      style={{ width: 280, height: 280 }}
+    >
+      <motion.svg
+        viewBox="0 0 200 200"
+        width="100%"
+        height="100%"
+        aria-label="Panda mascot"
+        animate={headBobCtrl}
+      >
+        {/* shadow */}
+        <defs>
+          <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow
+              dx="0"
+              dy="2"
+              stdDeviation="4"
+              floodColor="#000"
+              floodOpacity="0.25"
             />
-            <path 
-              d="M110 76 Q124 70 138 76" 
-              stroke="#4a4a4a" 
-              strokeWidth="3" 
-              fill="none" 
+          </filter>
+        </defs>
+
+        <g filter="url(#s)">
+          {/* Head */}
+          <ellipse
+            cx="100"
+            cy="100"
+            rx="70"
+            ry="66"
+            fill="#fff"
+            stroke="#d8d8d8"
+            strokeWidth="2"
+          />
+
+          {/* Ears */}
+          <motion.circle
+            cx="58"
+            cy="45"
+            r="26"
+            fill={TOKENS.black}
+            animate={earCtrls}
+          />
+          <motion.circle
+            cx="142"
+            cy="45"
+            r="26"
+            fill={TOKENS.black}
+            animate={earCtrls}
+          />
+          <circle cx="58" cy="45" r="10" fill={TOKENS.pink} />
+          <circle cx="142" cy="45" r="10" fill={TOKENS.pink} />
+
+          {/* Eye-patches */}
+          <ellipse
+            cx="70"
+            cy="95"
+            rx="20"
+            ry="28"
+            fill={TOKENS.black}
+            transform="rotate(-8 70 95)"
+          />
+          <ellipse
+            cx="130"
+            cy="95"
+            rx="20"
+            ry="28"
+            fill={TOKENS.black}
+            transform="rotate(8 130 95)"
+          />
+
+          {/* Eye whites */}
+          <ellipse cx="70" cy="95" rx="13" ry="11" fill="#fff" />
+          <ellipse cx="130" cy="95" rx="13" ry="11" fill="#fff" />
+
+          {/* Pupils */}
+          <motion.circle
+            cx="70"
+            cy="97"
+            r={emotion === 'sad' ? 4 : 6}
+            fill={TOKENS.black}
+            animate={blinkCtrls}
+          />
+          <motion.circle
+            cx="130"
+            cy="97"
+            r={emotion === 'sad' ? 4 : 6}
+            fill={TOKENS.black}
+            animate={blinkCtrls}
+          />
+
+          {/* Highlights */}
+          <circle cx="72" cy="93" r="2" fill="#fff" opacity="0.9" />
+          <circle cx="132" cy="93" r="2" fill="#fff" opacity="0.9" />
+
+          {/* Brows */}
+          {emotion === 'thinking' && (
+            <motion.g animate={browCtrls}>
+              <path
+                d="M55 75 Q70 65 85 75"
+                stroke={TOKENS.black}
+                strokeWidth="4"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <path
+                d="M115 75 Q130 65 145 75"
+                stroke={TOKENS.black}
+                strokeWidth="4"
+                strokeLinecap="round"
+                fill="none"
+              />
+            </motion.g>
+          )}
+
+          {/* Nose (heart) */}
+          <path
+            d="M96 115 a4 4 0 0 1 8 0 q0 5 -4 8 q-4 -3 -4 -8Z"
+            fill={TOKENS.black}
+          />
+
+          {/* Mouth / jaw */}
+          <motion.g animate={jawCtrls}>
+            <motion.path
+              fill="none"
+              stroke={TOKENS.stroke}
+              strokeWidth="4"
               strokeLinecap="round"
+              variants={mouthVariants}
+              animate={
+                speaking && emotion === 'speaking' ? 'talking' : 'static'
+              }
             />
           </motion.g>
-        )}
 
-        {/* Nose - slightly larger and more defined */}
-        <path 
-          d="M97 112 L103 112 L100 118 Z" 
-          fill="#2a2a2a"
-        />
-
-        {/* Upper teeth line - stays static for realism */}
-        <path 
-          d="M85 135 Q100 133 115 135" 
-          stroke="#F0F0F0" 
-          strokeWidth="2" 
-          fill="none" 
-        />
-
-        {/* Animated jaw group */}
-        <motion.g animate={jawCtrls}>
-          {/* Mouth - much more pronounced movement */}
-          <motion.path 
-            fill="none"
-            stroke="#2a2a2a" 
-            strokeWidth="3"
-            strokeLinecap="round"
-            variants={mouthVariants}
-            animate={speaking && emotion === 'speaking' ? 'talking' : 'static'}
-          />
-        </motion.g>
-
-        {/* Subtle cheek definition - no pink blush for more natural look */}
-        {(emotion === 'smiling' || emotion === 'speaking') && (
-          <>
-            <circle 
-              cx="52" 
-              cy="108" 
-              r="6" 
-              fill="#F8F8F8" 
-              opacity="0.8"
+          {/* Tear */}
+          {emotion === 'sad' && !prefersReducedMotion && (
+            <motion.ellipse
+              cx="65"
+              cy="105"
+              rx="3"
+              ry="12"
+              fill={TOKENS.blue}
+              initial={{ opacity: 0 }}
+              animate={{
+                opacity: [0, 1, 1, 0],
+                x: [0, 2, 4],
+                y: [0, 15, 30, 42],
+              }}
+              transition={{
+                duration: 2.5,
+                repeat: Infinity,
+                repeatDelay: 1.2,
+              }}
             />
-            <circle 
-              cx="148" 
-              cy="108" 
-              r="6" 
-              fill="#F8F8F8" 
-              opacity="0.8"
-            />
-          </>
-        )}
+          )}
 
-        {/* Sad tear */}
-        {emotion === 'sad' && !prefersReducedMotion && (
-          <motion.ellipse 
-            cx="68" 
-            cy="98" 
-            rx="2" 
-            ry="12" 
-            fill="#87CEEB"
-            initial={{ opacity: 0 }}
-            animate={{ 
-              opacity: [0, 1, 1, 0],
-              y: [0, 15, 20, 25]
-            }}
-            transition={{ 
-              duration: 2.5, 
-              repeat: Infinity,
-              repeatDelay: 1.5
-            }}
-          />
-        )}
+          {/* Thinking bubbles */}
+          {emotion === 'thinking' && !prefersReducedMotion && (
+            <motion.g
+              key="think"
+              initial={{ opacity: 0 }}
+              animate={{
+                opacity: [0, 1, 1, 0],
+                y: [0, -5, -10, -15],
+              }}
+              transition={{
+                duration: 2,
+                repeat: Infinity,
+                repeatDelay: 1,
+              }}
+            >
+              <circle cx="155" cy="40" r="3" fill="#6a6a6a" />
+              <circle cx="165" cy="30" r="4" fill="#6a6a6a" />
+              <circle cx="177" cy="20" r="5" fill="#6a6a6a" />
+            </motion.g>
+          )}
 
-        {/* Thinking dots */}
-        {emotion === 'thinking' && !prefersReducedMotion && (
-          <motion.g
-            initial={{ opacity: 0 }}
-            animate={{ 
-              opacity: [0, 1, 1, 0],
-              y: [0, -8, -12, -18]
-            }}
-            transition={{ 
-              duration: 1.8, 
-              repeat: Infinity,
-              repeatDelay: 0.8
-            }}
-          >
-            <circle cx="140" cy="48" r="2.5" fill="#666" />
-            <circle cx="152" cy="42" r="3.5" fill="#666" />
-            <circle cx="164" cy="36" r="4.5" fill="#666" />
-          </motion.g>
-        )}
-      </svg>
+          {/* Confetti pop */}
+          {emotion === 'celebrate' && (
+            <motion.g animate={confetti}>
+              <circle cx="40" cy="40" r="4" fill="#ffcf5c" />
+              <circle cx="160" cy="50" r="3" fill="#7be3aa" />
+              <circle cx="90" cy="25" r="3" fill="#f78181" />
+            </motion.g>
+          )}
+        </g>
+      </motion.svg>
     </motion.div>
-  )
+  );
 }

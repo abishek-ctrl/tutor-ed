@@ -1,20 +1,30 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  darkMode: 'class',
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: [
+    './index.html',
+    './src/**/*.{ts,tsx}',   // <- the usual globs
+  ],
   theme: {
     extend: {
+      fontFamily: {
+        display: ['"Space Grotesk"', 'sans-serif'],
+        body: ['Inter', 'sans-serif'],
+      },
       colors: {
         brand: {
-          400: '#8b5cf6',
-          500: '#7c3aed',
-          600: '#6d28d9'
-        }
+          50 : '#eef2ff',
+          100: '#e0e7ff',
+          200: '#c7d2fe',
+          300: '#a5b4fc',
+          400: '#818cf8',
+          500: '#6366f1',   // main
+          600: '#4f46e5',
+          700: '#4338ca',
+          800: '#3730a3',
+          900: '#312e81',
+        },
       },
-      boxShadow: {
-        glass: '0 8px 30px rgba(2,6,23,0.35)'
-      }
-    }
+    },
   },
-  plugins: []
-}
+  plugins: [],
+};
