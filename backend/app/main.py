@@ -20,11 +20,13 @@ from app.rag.ingest import upsert_file_bytes
 from app.rag.generator import generate_answer
 from app.rag.emotion import classify_emotion
 from app.rag.memory import append_turn, update_summary_if_needed, get_summary
+from app.speech.tts import text_to_speech
+from app.speech.stt import transcribe_audio
 
 logger = logging.getLogger("ai_tutor")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="RAG Tutor API", version="1.2")
+app = FastAPI(title="RAG Tutor API", version="1.3")
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,23 +163,12 @@ async def chat_endpoint(req: ChatRequest):
 async def stt_endpoint(file: UploadFile = File(...), email: Optional[str] = Form(None)):
     try:
         contents = await file.read()
-        suffix = "." + file.filename.split(".")[-1] if "." in file.filename else ".wav"
-        allowed = {"flac","mp3","mp4","mpeg","mpga","m4a","ogg","opus","wav","webm"}
-        if suffix.lstrip(".").lower() not in allowed:
-            suffix = ".wav"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(contents)
-            tmp.flush()
-            tmp_path = tmp.name
-        try:
-            transcript = groq_stt_transcribe_from_file(tmp_path)
-            return PlainTextResponse(transcript)
-        finally:
-            try: os.unlink(tmp_path)
-            except Exception: pass
+        transcript = transcribe_audio(contents)
+        return PlainTextResponse(transcript)
     except Exception as e:
         logger.exception("STT endpoint failed")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/tts")
 async def tts_endpoint(body: Dict[str, Any] = Body(...)):
@@ -189,14 +180,13 @@ async def tts_endpoint(body: Dict[str, Any] = Body(...)):
     if fmt not in ("wav", "mp3"):
         fmt = "wav"
     try:
-        tmp_path = groq_tts_synthesize_to_file(text=text, voice=voice, response_format=fmt)
+        audio_stream = text_to_speech(text=text, voice=voice, response_format=fmt)
         media_type = "audio/wav" if fmt == "wav" else "audio/mpeg"
-        return StreamingResponse(open(tmp_path, "rb"), media_type=media_type)
+        return StreamingResponse(audio_stream, media_type=media_type)
     except Exception as e:
         logger.exception("TTS endpoint failed")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        pass
+
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host=getattr(settings, "host", "0.0.0.0"), port=getattr(settings, "port", 8000), reload=True)

@@ -1,4 +1,3 @@
-// src/components/MascotPage.tsx
 import {
   Trash2,
   Database,
@@ -8,9 +7,12 @@ import {
   SendHorizonal,
   VolumeX,
   Volume2,
+  Book,
+  User,
+  Bot,
 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 
 import MascotHead, { UIEmotion } from './MascotHead';
@@ -18,7 +20,6 @@ import MicButton from './MicButton';
 import DataDrawer from './DataDrawer';
 import { chat, sttUpload, tts, deleteUserDocs } from '../services/api';
 
-/* ---------- util (unchanged apart from 'celebrate') -------- */
 function mapBackendEmotionToUI(label?: string): UIEmotion {
   const v = (label || '').toLowerCase().trim();
   if (['happy', 'encouraging', 'neutral'].includes(v)) return 'smiling';
@@ -31,26 +32,33 @@ function mapBackendEmotionToUI(label?: string): UIEmotion {
 type ChatItem = { role: 'user' | 'assistant'; text: string };
 
 export default function MascotPage({ user }: { user: { name: string; email: string } }) {
-  /* ---------- state ---------- */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [emotion, setEmotion] = useState<UIEmotion>('smiling');
   const [muteTTS, setMuteTTS] = useState<boolean>(
-    () => localStorage.getItem('ai_tutor_mute') === 'true',
+    () => typeof window !== 'undefined' && localStorage.getItem('ai_tutor_mute') === 'true',
   );
   const [busy, setBusy] = useState(false);
-  const [chatMode, setChatMode] = useState<'voice' | 'text'>('voice');
+  const [chatMode, setChatMode] = useState<'voice' | 'text'>('text');
   const [textInput, setTextInput] = useState('');
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const sessionId = useMemo(() => uuid(), []);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  /* ---------- effects ---------- */
-  useEffect(() => document.documentElement.classList.add('dark'), []);
-  useEffect(() => localStorage.setItem('ai_tutor_mute', String(muteTTS)), [muteTTS]);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('ai_tutor_mute', String(muteTTS));
+    }
+  }, [muteTTS]);
+
+  useEffect(() => {
+    chatContainerRef.current?.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
+
 
   const pushMessage = (m: ChatItem) => setMessages((p) => [...p, m]);
 
-  /* ---------- voice + chat handlers (same logic as before) ---------- */
   async function handleUtterance(blob: Blob) {
     if (busy) return;
     setBusy(true);
@@ -89,7 +97,6 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
       setEmotion(mapped);
 
       if (muteTTS) {
-        // Fake speaking duration
         setSpeaking(true);
         await new Promise((r) => setTimeout(r, Math.min(3000, text.split(' ').length * 70)));
         setSpeaking(false);
@@ -128,13 +135,12 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
     }, 1500);
   }
 
-  /* ---------- destructive actions ---------- */
   function handleLogout() {
     localStorage.removeItem('ai_tutor_user');
     window.location.reload();
   }
   async function handleDeleteData() {
-    if (!confirm('Delete all your indexed data?')) return;
+    if (!confirm('Delete all your indexed data? This action cannot be undone.')) return;
     try {
       await deleteUserDocs(user.email);
       alert('All data removed.');
@@ -144,95 +150,83 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
     }
   }
 
-  /* ---------- render ---------- */
   return (
-    <div className="min-h-screen font-body text-zinc-200 bg-gradient-to-br from-[#0A0F23] via-[#0E1733] to-[#121b3e] selection:bg-brand-500/40">
-      {/* Header */}
-      <header className="sticky top-0 z-20 backdrop-blur bg-black/30 border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-          <h1 className="font-display text-2xl text-white">AI&nbsp;Tutor</h1>
+    <div className="h-screen w-screen flex bg-slate-900 text-zinc-200 font-sans">
+      {/* Sidebar */}
+      <aside className="w-72 bg-gray-900/80 p-6 flex flex-col justify-between border-r border-white/10">
+        <div>
+          <div className="flex items-center gap-3 mb-10">
+            <Book className="text-brand-500" />
+            <h1 className="text-2xl font-display font-bold text-white">AI Tutor</h1>
+          </div>
 
-          <div className="flex items-center gap-4">
-            <span className="hidden sm:inline text-sm text-zinc-400">
-              Hello&nbsp;{user.name.split(' ')[0]}
-            </span>
-
-            <button
-              onClick={() => setMuteTTS((m) => !m)}
-              className="icon-btn"
-              title={muteTTS ? 'Enable audio' : 'Disable audio'}
-            >
-              {muteTTS ? <VolumeX /> : <Volume2 />}
-            </button>
-
-            <button onClick={() => setDrawerOpen(true)} className="btn-ghost">
-              <Database className="w-4 h-4 mr-1" />
-              My&nbsp;Data
-            </button>
-
-            <button onClick={handleDeleteData} className="btn-ghost text-red-400">
-              <Trash2 className="w-4 h-4 mr-1" />
-              Delete
-            </button>
-
-            <button onClick={handleLogout} className="btn-ghost">
-              <LogOut className="w-4 h-4 mr-1" />
-              Logout
-            </button>
+          <div className="flex flex-col items-center text-center">
+            <MascotHead emotion={emotion} speaking={speaking} className="mb-4" />
+            <p className="text-zinc-400 min-h-[2rem] text-sm">
+              {{
+                thinking: 'Let me think...',
+                speaking: 'Here is what I found!',
+                sad: 'Oops, something went wrong.',
+                celebrate: 'Awesome job! 🎉',
+              }[emotion] || 'I am ready to help!'}
+            </p>
           </div>
         </div>
-      </header>
 
-      {/* Main split grid */}
-      <main className="max-w-7xl mx-auto px-6 py-8 grid lg:grid-cols-[35%_1fr] gap-8">
-        {/* Panda / tips card */}
-        <section className="glass-card tilt-2 flex flex-col items-center lg:sticky lg:top-24">
-          <MascotHead emotion={emotion} speaking={speaking} className="mb-3" />
-
-          <p className="text-center text-zinc-400 min-h-[2rem]">
-            {{
-              thinking: 'Thinking…',
-              speaking: 'Here we go!',
-              sad: 'Hmm, something went wrong.',
-              celebrate: 'Great job! 🎉',
-            }[emotion] || 'Ask me anything about your documents!'}
-          </p>
-        </section>
-
-        {/* Chat card */}
-        <section className="glass-card flex flex-col overflow-hidden">
-          {/* Chat header */}
-          <div className="p-4 border-b border-white/5 flex items-center justify-between">
-            <h3 className="font-display font-semibold">Conversation</h3>
-
-            <button
-              onClick={() => setChatMode((m) => (m === 'voice' ? 'text' : 'voice'))}
-              className="btn-ghost text-xs"
-            >
-              {chatMode === 'voice' ? (
-                <>
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Switch&nbsp;to&nbsp;Text
-                </>
-              ) : (
-                <>
-                  <Mic className="w-4 h-4 mr-2" />
-                  Switch&nbsp;to&nbsp;Voice
-                </>
-              )}
+        <div className="space-y-2">
+            <button onClick={() => setDrawerOpen(true)} className="w-full btn-ghost justify-start">
+                <Database className="w-4 h-4 mr-2" />
+                Manage My Data
             </button>
-          </div>
+            <button onClick={handleDeleteData} className="w-full btn-ghost justify-start text-red-400 hover:bg-red-500/10">
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete All Data
+            </button>
+            <button onClick={handleLogout} className="w-full btn-ghost justify-start">
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+            </button>
+        </div>
+      </aside>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col">
+        <header className="p-4 border-b border-white/10 flex justify-between items-center">
+            <div className='flex items-center'>
+                <h2 className="text-lg font-semibold">Conversation</h2>
+                <div className='ml-4 flex items-center gap-2'>
+                    <button onClick={() => setChatMode('text')} className={`px-3 py-1 text-xs rounded-md ${chatMode === 'text' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
+                        <MessageCircle className="w-4 h-4 inline mr-1" /> Text
+                    </button>
+                    <button onClick={() => setChatMode('voice')} className={`px-3 py-1 text-xs rounded-md ${chatMode === 'voice' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
+                        <Mic className="w-4 h-4 inline mr-1" /> Voice
+                    </button>
+                </div>
+            </div>
+            
+            <div className='flex items-center gap-2'>
+                <span className="text-sm text-zinc-400">
+                    Hi, {user.name.split(' ')[0]}
+                </span>
+                <button
+                    onClick={() => setMuteTTS((m) => !m)}
+                    className="icon-btn"
+                    title={muteTTS ? 'Unmute' : 'Mute'}
+                >
+                    {muteTTS ? <VolumeX size={18}/> : <Volume2 size={18} />}
+                </button>
+            </div>
+        </header>
+
+        <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
             {messages.length === 0 && (
               <div className="h-full flex items-center justify-center text-center text-zinc-500">
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                 >
-                  <div className="text-6xl mb-3">🐼</div>
-                  Ask me anything!
+                  <div className="text-6xl mb-3">📚</div>
+                  Ask me anything about your documents!
                 </motion.div>
               </div>
             )}
@@ -242,24 +236,24 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
                 key={i}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex items-start gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div className={m.role === 'user' ? 'bubble-user' : 'bubble-ai'}>
+                {m.role === 'assistant' && <div className="w-8 h-8 rounded-full bg-brand-500/50 grid place-items-center flex-shrink-0"><Bot size={18}/></div>}
+                <div className={`${m.role === 'user' ? 'bubble-user' : 'bubble-ai'} max-w-xl`}>
                   {m.text}
                 </div>
+                {m.role === 'user' && <div className="w-8 h-8 rounded-full bg-white/10 grid place-items-center flex-shrink-0"><User size={18}/></div>}
               </motion.div>
             ))}
-          </div>
+        </div>
 
-          {/* Input bar */}
-          <div className="p-4 border-t border-white/5 sticky bottom-0 bg-black/10 backdrop-blur">
+        <div className="p-4 border-t border-white/5">
             {chatMode === 'voice' ? (
-              <div className="text-center">
+              <div className="flex flex-col items-center justify-center">
                 <p className="text-sm text-zinc-400 mb-4">
-                  {busy ? 'Processing…' : 'Click the mic and start talking'}
+                  {busy ? 'Processing your voice...' : 'Click the mic and start talking'}
                 </p>
-                <MicButton onUtterance={handleUtterance} disabled={busy} />
+                <MicButton onUtterance={handleUtterance} />
               </div>
             ) : (
               <div className="flex gap-3">
@@ -269,13 +263,13 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
                   onKeyDown={(e) =>
                     e.key === 'Enter' && !busy && textInput.trim() && handleChat(textInput)
                   }
-                  placeholder="Type your message…"
+                  placeholder="Type your message, or ask about your documents..."
                   disabled={busy}
-                  className="flex-1 h-12 px-4 rounded-xl border bg-white/10 border-white/10 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
+                  className="flex-1 h-12 px-4 rounded-xl bg-gray-900/80 border border-white/10 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
                 />
                 <button
                   onClick={() => handleChat(textInput)}
-                  className="btn-primary disabled:opacity-50"
+                  className="btn-primary w-24 disabled:opacity-50"
                   disabled={busy || !textInput.trim()}
                 >
                   <SendHorizonal className="w-5 h-5" />
@@ -283,7 +277,6 @@ export default function MascotPage({ user }: { user: { name: string; email: stri
               </div>
             )}
           </div>
-        </section>
       </main>
 
       <DataDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} email={user.email} />

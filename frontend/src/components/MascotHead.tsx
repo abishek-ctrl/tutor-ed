@@ -6,7 +6,7 @@ export type UIEmotion =
   | 'thinking'
   | 'speaking'
   | 'sad'
-  | 'celebrate';     // 🆕 little confetti burst when you pass tests etc.
+  | 'celebrate';
 
 interface Props {
   emotion?: UIEmotion;
@@ -14,12 +14,12 @@ interface Props {
   className?: string;
 }
 
-/* Design tokens – keep them here so branding is easy */
 const TOKENS = {
-  black: '#151515',
+  black: '#1D2434',
   pink:  '#F7AEC8',
   blue:  '#8FD6FF',
-  stroke:'#1F1F1F',
+  stroke:'#1D2434',
+  white: '#FFFFFF'
 };
 
 export default function MascotHead({
@@ -27,7 +27,6 @@ export default function MascotHead({
   speaking = false,
   className = '',
 }: Props) {
-  /* ───────── animation ctrls ───────── */
   const floatCtrls  = useAnimation();
   const blinkCtrls  = useAnimation();
   const browCtrls   = useAnimation();
@@ -36,21 +35,19 @@ export default function MascotHead({
   const headBobCtrl = useAnimation();
   const confetti    = useAnimation();
 
-  const prefersReducedMotion = window.matchMedia(
+  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia(
     '(prefers-reduced-motion: reduce)',
   ).matches;
 
-  /* Floating idle */
   useEffect(() => {
     if (!prefersReducedMotion) {
       floatCtrls.start({
-        y: [0, -4, 0],
+        y: [0, -5, 0],
         transition: { duration: 4, ease: 'easeInOut', repeat: Infinity },
       });
     }
   }, [prefersReducedMotion, floatCtrls]);
 
-  /* Blinks */
   useEffect(() => {
     if (prefersReducedMotion) return;
     let live = true;
@@ -72,7 +69,6 @@ export default function MascotHead({
     };
   }, [emotion, prefersReducedMotion, blinkCtrls]);
 
-  /* Eyebrows – higher when thinking */
   useEffect(() => {
     browCtrls.start({
       y: emotion === 'thinking' ? -6 : 0,
@@ -80,7 +76,6 @@ export default function MascotHead({
     });
   }, [emotion, browCtrls]);
 
-  /* Ear wiggle – subtle while thinking */
   useEffect(() => {
     if (emotion === 'thinking' && !prefersReducedMotion) {
       earCtrls.start({
@@ -92,7 +87,6 @@ export default function MascotHead({
     }
   }, [emotion, earCtrls, prefersReducedMotion]);
 
-  /* Jaw + head-bob while speaking */
   useEffect(() => {
     if (speaking && emotion === 'speaking' && !prefersReducedMotion) {
       jawCtrls.start({
@@ -109,7 +103,6 @@ export default function MascotHead({
     }
   }, [speaking, emotion, jawCtrls, headBobCtrl, prefersReducedMotion]);
 
-  /* Confetti burst for 'celebrate' */
   useEffect(() => {
     if (emotion === 'celebrate') {
       confetti.set({ opacity: 1, scale: 0 });
@@ -121,7 +114,6 @@ export default function MascotHead({
     }
   }, [emotion, confetti]);
 
-  /* Mouth paths */
   const mouthFor = (e: UIEmotion) => {
     switch (e) {
       case 'smiling':
@@ -164,32 +156,29 @@ export default function MascotHead({
         aria-label="Panda mascot"
         animate={headBobCtrl}
       >
-        {/* shadow */}
         <defs>
           <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow
               dx="0"
-              dy="2"
-              stdDeviation="4"
+              dy="3"
+              stdDeviation="5"
               floodColor="#000"
-              floodOpacity="0.25"
+              floodOpacity="0.15"
             />
           </filter>
         </defs>
 
         <g filter="url(#s)">
-          {/* Head */}
           <ellipse
             cx="100"
             cy="100"
             rx="70"
             ry="66"
-            fill="#fff"
-            stroke="#d8d8d8"
-            strokeWidth="2"
+            fill={TOKENS.white}
+            stroke="#E5E7EB"
+            strokeWidth="1"
           />
 
-          {/* Ears */}
           <motion.circle
             cx="58"
             cy="45"
@@ -207,7 +196,6 @@ export default function MascotHead({
           <circle cx="58" cy="45" r="10" fill={TOKENS.pink} />
           <circle cx="142" cy="45" r="10" fill={TOKENS.pink} />
 
-          {/* Eye-patches */}
           <ellipse
             cx="70"
             cy="95"
@@ -225,11 +213,9 @@ export default function MascotHead({
             transform="rotate(8 130 95)"
           />
 
-          {/* Eye whites */}
-          <ellipse cx="70" cy="95" rx="13" ry="11" fill="#fff" />
-          <ellipse cx="130" cy="95" rx="13" ry="11" fill="#fff" />
+          <ellipse cx="70" cy="95" rx="13" ry="11" fill={TOKENS.white} />
+          <ellipse cx="130" cy="95" rx="13" ry="11" fill={TOKENS.white} />
 
-          {/* Pupils */}
           <motion.circle
             cx="70"
             cy="97"
@@ -245,11 +231,9 @@ export default function MascotHead({
             animate={blinkCtrls}
           />
 
-          {/* Highlights */}
-          <circle cx="72" cy="93" r="2" fill="#fff" opacity="0.9" />
-          <circle cx="132" cy="93" r="2" fill="#fff" opacity="0.9" />
+          <circle cx="72" cy="93" r="2" fill={TOKENS.white} opacity="0.9" />
+          <circle cx="132" cy="93" r="2" fill={TOKENS.white} opacity="0.9" />
 
-          {/* Brows */}
           {emotion === 'thinking' && (
             <motion.g animate={browCtrls}>
               <path
@@ -269,13 +253,11 @@ export default function MascotHead({
             </motion.g>
           )}
 
-          {/* Nose (heart) */}
           <path
             d="M96 115 a4 4 0 0 1 8 0 q0 5 -4 8 q-4 -3 -4 -8Z"
             fill={TOKENS.black}
           />
 
-          {/* Mouth / jaw */}
           <motion.g animate={jawCtrls}>
             <motion.path
               fill="none"
@@ -289,7 +271,6 @@ export default function MascotHead({
             />
           </motion.g>
 
-          {/* Tear */}
           {emotion === 'sad' && !prefersReducedMotion && (
             <motion.ellipse
               cx="65"
@@ -311,7 +292,6 @@ export default function MascotHead({
             />
           )}
 
-          {/* Thinking bubbles */}
           {emotion === 'thinking' && !prefersReducedMotion && (
             <motion.g
               key="think"
@@ -332,7 +312,6 @@ export default function MascotHead({
             </motion.g>
           )}
 
-          {/* Confetti pop */}
           {emotion === 'celebrate' && (
             <motion.g animate={confetti}>
               <circle cx="40" cy="40" r="4" fill="#ffcf5c" />

@@ -20,7 +20,7 @@ class RetrievedDoc:
 
 class QdrantRetriever:
     def __init__(self, collection: str):
-        self.client = QdrantClient(url=str(settings.qdrant_url), api_key=settings.qdrant_api_key, prefer_grpc=False)
+        self.client = QdrantClient(url=str(settings.qdrant_url), api_key=settings.qdrant_api_key, prefer_grpc=True)
         self.collection = collection
 
     def embed_query(self, query: str) -> List[float]:
