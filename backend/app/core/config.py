@@ -7,9 +7,14 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
-    # Groq
+    # Groq for chat completion
     groq_api_key: str = Field(..., env="GROQ_API_KEY")
-    groq_model: str = Field("llama-3.3-70b-versatile", env="GROQ_MODEL")
+    groq_model: str = Field("llama-3.1-70b-versatile", env="GROQ_MODEL")
+
+    # Google Gemini for embeddings
+    google_api_key: str = Field(..., env="GOOGLE_API_KEY")
+    gemini_embedding_model: str = Field("models/embedding-001", env="GEMINI_EMBEDDING_MODEL")
+    gemini_embedding_dimensionality: int = Field(768, env="GEMINI_EMBEDDING_DIMENSIONALITY")
 
     # Qdrant
     qdrant_url: AnyUrl = Field(..., env="QDRANT_URL")
@@ -18,9 +23,6 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = Field(..., env="REDIS_URL")
-
-    # Embeddings
-    embedding_model: str = Field("all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
 
     # Ingest chunking
     chunk_token_size: int = Field(600, env="CHUNK_TOKEN_SIZE")
@@ -36,3 +38,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

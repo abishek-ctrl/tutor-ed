@@ -1,13 +1,18 @@
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
 from dataclasses import dataclass
 from app.core.config import settings
 import logging
+import numpy as np
+import google.generativeai as genai
 
 logger = logging.getLogger("rag.retriever")
-EMBED_MODEL = SentenceTransformer(settings.embedding_model)
 
+# Configure the Gemini client
+try:
+    genai.configure(api_key=settings.google_api_key)
+except Exception as e:
+    logger.error("Failed to configure Gemini client: %s", e)
 
 @dataclass
 class RetrievedDoc:
@@ -24,8 +29,26 @@ class QdrantRetriever:
         self.collection = collection
 
     def embed_query(self, query: str) -> List[float]:
-        vec = EMBED_MODEL.encode(query, convert_to_numpy=True)
-        return vec.tolist()
+        """Generates and normalizes an embedding for a single query using the Gemini API."""
+        try:
+            result = genai.embed_content(
+                model=settings.gemini_embedding_model,
+                content=query,
+                task_type="RETRIEVAL_QUERY",
+                output_dimensionality=settings.gemini_embedding_dimensionality
+            )
+            raw_embedding = result['embedding']
+            
+            emb_np = np.array(raw_embedding)
+            norm = np.linalg.norm(emb_np)
+            if norm > 0:
+                return (emb_np / norm).tolist()
+            else:
+                return [0.0] * settings.gemini_embedding_dimensionality
+
+        except Exception as e:
+            logger.error(f"Gemini query embedding failed: {e}")
+            return [0.0] * settings.gemini_embedding_dimensionality
 
     def retrieve(self, query: str, top_k: int = 8, filter_payload: Optional[models.Filter] = None) -> List[RetrievedDoc]:
         qvec = self.embed_query(query)
@@ -81,3 +104,4 @@ class QdrantRetriever:
                 break
         
         return list(unique.values())
+
