@@ -158,11 +158,7 @@ async def chat_endpoint(req: ChatRequest):
     collection_name = sanitize_email_for_collection(req.email)
     
     try:
-        # Before doing anything, check if the user is trying to chat without any docs.
-        # The AI will handle this gracefully, but we avoid adding a user message to history
-        # if they are just sending a message to a doc-less bot.
         if not _collection_exists(collection_name):
-            # The generator will see no context and give the "I can't answer" response.
             gen = generate_answer(req.message, [], max_tokens=100)
             return {"session_id": req.session_id, "text": gen["text"].strip(), "emotion": "clarifying", "citations": []}
 

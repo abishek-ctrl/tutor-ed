@@ -3,7 +3,7 @@ uvicorn[standard]
 pydantic
 groq
 qdrant-client
-google-genai
+google-generativeai
 numpy
 redis
 python-multipart
@@ -12,4 +12,5 @@ tiktoken
 requests
 tenacity
 gunicorn
+google-genai
 pydantic_settings
