@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, PlainTextResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
-from qdrant_client import models
+from qdrant_client import models, QdrantClient
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from groq import Groq
@@ -26,7 +26,7 @@ from app.speech.stt import transcribe_audio
 logger = logging.getLogger("ai_tutor")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="RAG Tutor API", version="1.3")
+app = FastAPI(title="RAG Tutor API", version="1.5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,11 +36,24 @@ app.add_middleware(
 )
 
 _groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY") or getattr(settings, "groq_api_key", None))
+# Use a single, shared Qdrant client instance
+_qdrant_client = QdrantClient(url=str(settings.qdrant_url), api_key=settings.qdrant_api_key, prefer_grpc=True)
+
 
 def sanitize_email_for_collection(email: str) -> str:
     """Sanitizes an email address to be used as a Qdrant collection name."""
     sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', email)
     return f"{settings.qdrant_collection_prefix}_{sanitized}"
+
+def _collection_exists(collection_name: str) -> bool:
+    """Checks if a Qdrant collection exists."""
+    try:
+        collections_response = _qdrant_client.get_collections()
+        collection_names = [c.name for c in collections_response.collections]
+        return collection_name in collection_names
+    except Exception as e:
+        logger.error(f"Failed to check for collection {collection_name}: {e}")
+        return False
 
 # ---- API endpoints ----
 @app.post("/docs/upload")
@@ -67,15 +80,15 @@ async def docs_list(email: str = Query(...), limit: int = 200):
         raise HTTPException(status_code=400, detail="Email is required.")
         
     collection_name = sanitize_email_for_collection(email)
-    retriever = QdrantRetriever(collection=collection_name)
+    
+    if not _collection_exists(collection_name):
+        return {"docs": []}
 
+    retriever = QdrantRetriever(collection=collection_name)
     try:
         docs = retriever.list_documents(limit=limit, batch_size=200)
         return {"docs": docs}
     except Exception as e:
-        # If the collection doesn't exist, it's not an error, just means no documents.
-        if "not found" in str(e).lower():
-            return {"docs": []}
         logger.exception("Docs list failed")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -85,11 +98,12 @@ async def docs_delete(email: str = Query(...)):
         raise HTTPException(status_code=400, detail="Email is required.")
         
     collection_name = sanitize_email_for_collection(email)
-    retriever = QdrantRetriever(collection=collection_name)
     
+    if not _collection_exists(collection_name):
+        return {"deleted": False, "message": "Collection does not exist."}
+
     try:
-        # Deleting the entire collection for the user
-        retriever.client.delete_collection(collection_name=collection_name)
+        _qdrant_client.delete_collection(collection_name=collection_name)
         return {"deleted": True, "collection_name": collection_name}
     except Exception as e:
         logger.exception("Docs delete failed")
@@ -101,16 +115,8 @@ async def user_has_data(email: str = Query(...)):
         raise HTTPException(status_code=400, detail="Email is required.")
     
     collection_name = sanitize_email_for_collection(email)
-    retriever = QdrantRetriever(collection=collection_name)
-    
-    try:
-        # Check if the collection exists and has at least one document.
-        collection_info = retriever.client.get_collection(collection_name=collection_name)
-        has_data = collection_info.points_count > 0
-        return {"has_data": has_data}
-    except Exception as e:
-        # If the collection doesn't exist, then the user has no data.
-        return {"has_data": False}
+    return {"has_data": _collection_exists(collection_name)}
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -121,37 +127,45 @@ class ChatRequest(BaseModel):
     short_answer: Optional[bool] = False
     source_documents: Optional[List[str]] = None
 
+
 def _build_contexts(message: str, top_k: int, include_summary: bool, session_id: Optional[str], collection_name: str, source_documents: Optional[List[str]] = None):
-    retriever = QdrantRetriever(collection=collection_name)
+    contexts = []
     
-    qdrant_filter = None
-    if source_documents:
+    # Only try to retrieve if the collection exists and sources are specified
+    if _collection_exists(collection_name) and source_documents:
+        retriever = QdrantRetriever(collection=collection_name)
         qdrant_filter = models.Filter(
             should=[
                 models.FieldCondition(key="file_name", match=models.MatchValue(value=doc))
                 for doc in source_documents
             ]
         )
+        docs = retriever.retrieve(message, top_k=top_k or 6, filter_payload=qdrant_filter)
+        contexts.extend([{"id": d.id, "text": d.text, "source": d.source} for d in docs])
 
-    docs = retriever.retrieve(message, top_k=top_k or 6, filter_payload=qdrant_filter)
-    contexts = [{"id": d.id, "text": d.text, "source": d.source} for d in docs]
     if include_summary and session_id:
         summary = get_summary(session_id) or ""
         if summary:
             contexts.insert(0, {"id": "session_summary", "text": summary, "source": "session_summary"})
+            
     return contexts
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    """
-    Multi-turn: retrieval + answer + memory updates.
-    """
     if not req.email:
         raise HTTPException(status_code=400, detail="Email is required for chat.")
 
     collection_name = sanitize_email_for_collection(req.email)
     
     try:
+        # Before doing anything, check if the user is trying to chat without any docs.
+        # The AI will handle this gracefully, but we avoid adding a user message to history
+        # if they are just sending a message to a doc-less bot.
+        if not _collection_exists(collection_name):
+            # The generator will see no context and give the "I can't answer" response.
+            gen = generate_answer(req.message, [], max_tokens=100)
+            return {"session_id": req.session_id, "text": gen["text"].strip(), "emotion": "clarifying", "citations": []}
+
         if req.session_id:
             append_turn(req.session_id, "user", f"{req.name or 'user'}: {req.message}")
             update_summary_if_needed(req.session_id, threshold_turns=20)
@@ -164,6 +178,7 @@ async def chat_endpoint(req: ChatRequest):
             collection_name=collection_name, 
             source_documents=req.source_documents
         )
+
         gen = generate_answer(req.message, contexts, max_tokens=512, temperature=0.0, short_answer=bool(req.short_answer))
         text = gen["text"].strip()
         emotion = classify_emotion(text)

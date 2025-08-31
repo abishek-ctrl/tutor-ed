@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Plus, MessageSquare, LogOut, Trash2, BookUp } from 'lucide-react'
+import { Plus, MessageSquare, LogOut, Trash2, BookUp, Loader, UploadCloud } from 'lucide-react'
 import { Session } from '../hooks/useSessions'
 import { useAuth } from '../context/AuthContext'
 import { deleteUserDocs, uploadDocs } from '../services/api'
@@ -12,15 +12,22 @@ type Doc = { source: string; snippet: string }
 type Props = {
   sessions: Session[]
   allDocs: Doc[]
+  isLoading: boolean
   onRefreshDocs: () => Promise<void>
   onDeleteSession: (id: string) => void
   showConfirmation: (title: string, message: string, onConfirm: () => void) => void
 }
 
-export default function SessionDashboard({ sessions, allDocs, onRefreshDocs, onDeleteSession, showConfirmation }: Props) {
+export default function SessionDashboard({ sessions, allDocs, isLoading, onRefreshDocs, onDeleteSession, showConfirmation }: Props) {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
   const [isUploading, setIsUploading] = useState(false)
+
+  const hasEverHadDocs = useMemo(() => {
+    if (!user) return false;
+    return localStorage.getItem(`has_docs_${user.email}`) === 'true';
+  }, [user, allDocs]);
+
 
   async function handleDeleteData() {
     if (!user) return
@@ -59,8 +66,51 @@ export default function SessionDashboard({ sessions, allDocs, onRefreshDocs, onD
       () => onDeleteSession(session.id)
     )
   }
+  
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen bg-slate-900 flex items-center justify-center text-zinc-400">
+        <Loader className="animate-spin mr-2" />
+        Loading dashboard...
+      </div>
+    );
+  }
 
   const hasDocuments = allDocs.length > 0
+
+  // The very first time a user logs in, show the full-page upload.
+  // After that, always show the session dashboard.
+  if (!hasEverHadDocs && !hasDocuments) {
+     return (
+        <div className="relative min-h-screen w-screen bg-slate-900 text-zinc-200 font-sans p-6 md:p-10 flex flex-col items-center justify-center">
+             <div className="absolute top-6 right-6">
+                <motion.button
+                    whileHover={{ y: -1, scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={logout} className="btn-ghost flex items-center gap-2"
+                >
+                    <LogOut size={16} /> Logout
+                </motion.button>
+            </div>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center">
+                 <h1 className="text-4xl font-display font-bold text-white mb-2">
+                    Welcome, {user?.name.split(' ')[0]}!
+                 </h1>
+                 <p className="text-zinc-400 mb-10">
+                    Let's build your knowledge base. Upload your first document to begin.
+                 </p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0, transition: {delay: 0.2} }} className="flex flex-col items-center">
+                <UploadZone onFiles={handleFileUpload} />
+                {isUploading && (
+                <div className="text-center mt-4 text-zinc-400 flex items-center justify-center gap-2">
+                    <BookUp className="animate-pulse" />
+                    <span>Processing your documents... this may take a moment.</span>
+                </div>
+                )}
+            </motion.div>
+        </div>
+     )
+  }
 
   return (
     <div className="relative min-h-screen w-screen bg-slate-900 text-zinc-200 font-sans p-6 md:p-10">
@@ -85,25 +135,14 @@ export default function SessionDashboard({ sessions, allDocs, onRefreshDocs, onD
       <div className="max-w-4xl mx-auto">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="text-4xl font-display font-bold text-white mb-2">
-            {hasDocuments ? "Your Learning Sessions" : `Welcome, ${user?.name.split(' ')[0]}!`}
+            Your Learning Sessions
           </h1>
           <p className="text-zinc-400 mb-10">
-            {hasDocuments ? "Select an existing session or start a new one." : "Let's build your knowledge base. Upload your first document to begin."}
+            Select an existing session or start a new one.
           </p>
         </motion.div>
 
-        {!hasDocuments ? (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <UploadZone onFiles={handleFileUpload} />
-            {isUploading && (
-              <div className="text-center mt-4 text-zinc-400 flex items-center justify-center gap-2">
-                <BookUp className="animate-pulse" />
-                <span>Processing your documents... this may take a moment.</span>
-              </div>
-            )}
-          </motion.div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <motion.button
               whileHover={{ y: -4, scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -144,8 +183,21 @@ export default function SessionDashboard({ sessions, allDocs, onRefreshDocs, onD
                 </motion.button>
               </motion.div>
             ))}
+            
+            {/* A subtle prompt to upload if data has been deleted */}
+            {!hasDocuments && hasEverHadDocs && (
+                 <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: sessions.length * 0.05 }}
+                    className="flex flex-col items-center justify-center text-center gap-3 p-8 rounded-2xl bg-slate-800/50 border border-zinc-700 border-dashed h-48"
+                >
+                    <UploadCloud className="text-zinc-500" size={32} />
+                    <span className="font-semibold text-zinc-400">No Documents Found</span>
+                    <p className="text-xs text-zinc-500">Upload new documents by creating a new session.</p>
+                </motion.div>
+            )}
           </div>
-        )}
       </div>
     </div>
   )

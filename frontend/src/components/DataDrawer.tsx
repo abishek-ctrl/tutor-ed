@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { uploadDocs } from '../services/api'
 import UploadZone from './UploadZone'
+import { CheckCircle } from 'lucide-react'
 
 type Doc = { source: string; snippet: string }
 
@@ -18,17 +19,20 @@ type Props = {
 export default function DataDrawer({ open, onClose, email, selectedDocs, onSelectionChange, allDocs, onRefresh }: Props) {
   const [queue, setQueue] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('');
 
   async function doUpload() {
     if (!queue.length) return
     setBusy(true)
+    setSuccessMessage('');
     try {
       await uploadDocs(email, queue)
       const newDocNames = queue.map((f) => f.name)
-      await onRefresh() // This refreshes the list in App.tsx
+      await onRefresh()
       setQueue([])
-      onSelectionChange([...new Set([...selectedDocs, ...newDocNames])]) // Auto-select new docs
-      alert('Uploaded and indexed successfully.')
+      onSelectionChange([...new Set([...selectedDocs, ...newDocNames])])
+      setSuccessMessage('Upload successful!');
+      setTimeout(() => setSuccessMessage(''), 4000); // Clear message after 4 seconds
     } catch (e: any) {
       alert('Upload failed: ' + e.message)
     } finally {
@@ -101,6 +105,19 @@ export default function DataDrawer({ open, onClose, email, selectedDocs, onSelec
               <button onClick={doUpload} disabled={busy || queue.length === 0} className="mt-3 btn-primary disabled:opacity-50">
                 {busy ? 'Indexing…' : 'Upload & Index'}
               </button>
+               <AnimatePresence>
+                {successMessage && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="flex items-center gap-2 text-sm text-green-400 mt-3"
+                  >
+                    <CheckCircle size={16} />
+                    <span>{successMessage}</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         </motion.div>

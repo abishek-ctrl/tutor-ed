@@ -5,8 +5,7 @@ export type UIEmotion =
   | 'smiling'
   | 'thinking'
   | 'speaking'
-  | 'sad'
-  | 'celebrate';
+  | 'sad';
 
 interface Props {
   emotion?: UIEmotion;
@@ -49,7 +48,6 @@ export default function MascotHead({
   const earCtrls     = useAnimation();
   const jawCtrls     = useAnimation();
   const headBobCtrl  = useAnimation();
-  const confetti     = useAnimation();
 
   const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia(
     '(prefers-reduced-motion: reduce)',
@@ -110,15 +108,13 @@ export default function MascotHead({
         return 'M75 160 Q100 145 125 160';
       case 'speaking':
         return 'M75 150 Q100 165 125 150';
-      case 'celebrate':
-        return 'M70 148 Q100 170 130 148';
       default:
         return 'M75 150 Q100 165 125 150';
     }
   };
 
   const mouthVariants = {
-    static: { 
+    static: {
       d: getMouthPath(emotion),
       transition: { duration: 0.2 }
     },
@@ -198,17 +194,6 @@ export default function MascotHead({
       headBobCtrl.start({ rotate: 0, transition: { duration: 0.3 } });
     }
   }, [speaking, emotion, jawCtrls, headBobCtrl, prefersReducedMotion]);
-
-  useEffect(() => {
-    if (emotion === 'celebrate') {
-      confetti.set({ opacity: 1, scale: 0 });
-      confetti.start({
-        scale: [0, 1.2],
-        opacity: [1, 0],
-        transition: { duration: 1 },
-      });
-    }
-  }, [emotion, confetti]);
 
   return (
     <motion.div
@@ -396,27 +381,6 @@ export default function MascotHead({
             </motion.g>
           )}
 
-          {emotion === 'sad' && !prefersReducedMotion && (
-            <motion.ellipse
-              cx="65"
-              cy="105"
-              rx="3"
-              ry="12"
-              fill={TOKENS.blue}
-              initial={{ opacity: 0 }}
-              animate={{
-                opacity: [0, 1, 1, 0],
-                x: [0, 2, 4],
-                y: [0, 15, 30, 42],
-              }}
-              transition={{
-                duration: 2.5,
-                repeat: Infinity,
-                repeatDelay: 1.2,
-              }}
-            />
-          )}
-
           {emotion === 'thinking' && !prefersReducedMotion && (
             <motion.g
               key="think"
@@ -437,13 +401,6 @@ export default function MascotHead({
             </motion.g>
           )}
 
-          {emotion === 'celebrate' && (
-            <motion.g animate={confetti}>
-              <circle cx="40" cy="40" r="4" fill="#ffcf5c" />
-              <circle cx="160" cy="50" r="3" fill="#7be3aa" />
-              <circle cx="90" cy="25" r="3" fill="#f78181" />
-            </motion.g>
-          )}
         </g>
       </motion.svg>
     </motion.div>

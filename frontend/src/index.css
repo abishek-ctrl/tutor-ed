@@ -2,13 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    @apply bg-slate-900;
+  }
+}
+
 .btn-primary {
   @apply inline-flex items-center justify-center rounded-xl px-6 py-3 font-semibold text-white shadow-lg transition-transform;
   background-image: linear-gradient(to right, #6366f1, #818cf8);
+  background-size: 200% auto;
 }
 .btn-primary:hover { 
   transform: translateY(-1px); 
   @apply shadow-xl;
+  background-position: right center;
 }
 
 .btn-ghost {

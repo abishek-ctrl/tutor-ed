@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { ArrowLeft } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ArrowLeft, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { uploadDocs } from '../services/api'
@@ -18,6 +18,7 @@ export default function CreateSession({ allDocs, onRefreshDocs, onCreate }: Prop
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set())
   const [sessionName, setSessionName] = useState('')
   const [isUploading, setIsUploading] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('');
   const navigate = useNavigate()
   const { user } = useAuth()
 
@@ -31,15 +32,17 @@ export default function CreateSession({ allDocs, onRefreshDocs, onCreate }: Prop
   async function handleFileUpload(files: File[]) {
     if (!user) return
     setIsUploading(true)
+    setSuccessMessage('');
     try {
       await uploadDocs(user.email, files)
-      await onRefreshDocs() // Refresh the doc list from App.tsx
-      // Auto-select the newly uploaded files
+      await onRefreshDocs() 
       const newFileNames = files.map(f => f.name)
       setSelectedDocs(prev => new Set([...prev, ...newFileNames]))
+      setSuccessMessage(`${files.length} document(s) indexed successfully!`);
+      setTimeout(() => setSuccessMessage(''), 4000); // Clear message
     } catch (e) {
       console.error("Upload failed", e)
-      // You could show a custom error notification here
+      alert("Upload failed. Please try again.");
     } finally {
       setIsUploading(false)
     }
@@ -101,7 +104,20 @@ export default function CreateSession({ allDocs, onRefreshDocs, onCreate }: Prop
         <div className="mb-8">
           <h2 className="text-xl font-bold mb-4">Or Upload New Documents</h2>
           <UploadZone onFiles={handleFileUpload} />
-          {isUploading && <p className="text-sm text-zinc-400 mt-2">Uploading and indexing, please wait...</p>}
+          <AnimatePresence>
+            {isUploading && <p className="text-sm text-zinc-400 mt-2">Uploading and indexing, please wait...</p>}
+            {successMessage && (
+                <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex items-center gap-2 text-sm text-green-400 mt-3"
+                >
+                <CheckCircle size={16} />
+                <span>{successMessage}</span>
+                </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <motion.button

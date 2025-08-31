@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth } from './context/AuthContext'
-import { initOrCheckUser, listUserDocs } from './services/api'
+import { listUserDocs } from './services/api'
 import { useSessions } from './hooks/useSessions'
 
 import EntryScreen from './components/EntryScreen'
@@ -15,6 +15,7 @@ import ProtectedRoute from './router/ProtectedRoute'
 type Doc = { source: string; snippet: string }
 type ModalState = { isOpen: boolean; title: string; message: string; onConfirm: () => void }
 
+// A faster, cleaner, and more subtle cross-fade animation
 const pageVariants = {
   initial: { opacity: 0 },
   in: { opacity: 1 },
@@ -22,8 +23,8 @@ const pageVariants = {
 }
 const pageTransition = {
   type: 'tween',
-  ease: 'easeInOut',
-  duration: 0.3,
+  ease: 'easeOut',
+  duration: 0.2, // Faster duration for a snappy feel
 }
 
 export default function App() {
@@ -31,9 +32,10 @@ export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const [allUserDocs, setAllUserDocs] = useState<Doc[]>([])
+  const [isDocsLoading, setIsDocsLoading] = useState(true);
   const [modalState, setModalState] = useState<ModalState>({ isOpen: false, title: '', message: '', onConfirm: () => {} })
 
-  const { sessions, addSession, updateSession, deleteSession, getSession } = useSessions(user)
+  const sessionsApi = useSessions(user ? user.email : null)
 
   const showConfirmation = (title: string, message: string, onConfirm: () => void) => {
     setModalState({ isOpen: true, title, message, onConfirm })
@@ -41,23 +43,58 @@ export default function App() {
 
   async function fetchDocs() {
     if (user) {
-      const docs = await listUserDocs(user.email)
-      setAllUserDocs(docs)
+      setIsDocsLoading(true);
+      try {
+        const docs = await listUserDocs(user.email);
+        setAllUserDocs(docs);
+        if (docs.length > 0) {
+          localStorage.setItem(`has_docs_${user.email}`, 'true');
+        }
+      } catch (e) {
+        console.error("Failed to fetch docs", e);
+        setAllUserDocs([]);
+      } finally {
+        setIsDocsLoading(false);
+      }
+    } else {
+      setAllUserDocs([]);
+      setIsDocsLoading(false);
     }
   }
 
   useEffect(() => {
-    if (user) {
-      fetchDocs() // Fetch docs whenever user is available
-      // If user is on a public page after login, redirect to dashboard
+    if (!isAuthLoading) {
+      fetchDocs();
+    }
+  }, [user, isAuthLoading]);
+
+  useEffect(() => {
+    if (isDocsLoading || !sessionsApi.sessions.length) return;
+
+    const availableDocSources = new Set(allUserDocs.map(doc => doc.source));
+    
+    sessionsApi.sessions.forEach(session => {
+      const newSelectedDocs = session.selectedDocs.filter(docName => availableDocSources.has(docName));
+
+      if (newSelectedDocs.length !== session.selectedDocs.length) {
+        sessionsApi.updateSession(session.id, { selectedDocs: newSelectedDocs });
+      }
+    });
+
+  }, [allUserDocs, isDocsLoading]);
+
+
+  useEffect(() => {
+    if (user && !isDocsLoading) {
       if (['/login', '/'].includes(location.pathname)) {
-        navigate('/dashboard')
+        navigate('/dashboard');
       }
     }
-  }, [user, navigate])
+  }, [user, isDocsLoading, location.pathname, navigate]);
+
 
   if (isAuthLoading) {
-     return <div className="h-screen flex items-center justify-center bg-zinc-900"></div>; // Blank screen during auth check
+     return <div className="h-screen flex items-center justify-center bg-zinc-900"></div>;
   }
 
   return (
@@ -77,21 +114,26 @@ export default function App() {
             
             <Route element={<ProtectedRoute />}>
               <Route path="/dashboard" element={<SessionDashboard 
-                sessions={sessions} 
+                sessions={sessionsApi.sessions} 
                 allDocs={allUserDocs}
+                isLoading={isDocsLoading}
                 onRefreshDocs={fetchDocs}
-                onDeleteSession={deleteSession} 
+                onDeleteSession={sessionsApi.deleteSession} 
                 showConfirmation={showConfirmation} 
               />} />
               <Route path="/session/new" element={<CreateSession
                 allDocs={allUserDocs}
                 onRefreshDocs={fetchDocs}
                 onCreate={(name, docs) => {
-                  const newSession = addSession({ name, selectedDocs: docs, messages: [] });
+                  const newSession = sessionsApi.addSession({ name, selectedDocs: docs, messages: [] });
                   navigate(`/session/${newSession.id}`);
                 }}
               />} />
-              <Route path="/session/:sessionId" element={<MascotPage allDocs={allUserDocs} onRefreshDocs={fetchDocs} sessionsApi={{ getSession, updateSession }} />} />
+              <Route path="/session/:sessionId" element={<MascotPage 
+                allDocs={allUserDocs} 
+                onRefreshDocs={fetchDocs} 
+                sessionsApi={sessionsApi} 
+              />} />
               <Route path="/" element={<Navigate to="/dashboard" />} />
             </Route>
           </Routes>

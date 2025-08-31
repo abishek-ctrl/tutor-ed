@@ -22,6 +22,15 @@ export default {
         sans: ['Inter', 'sans-serif'],
         display: ['Lora', 'serif'],
       },
+      animation: {
+        'gradient-move': 'gradient-move 15s ease infinite',
+      },
+      keyframes: {
+        'gradient-move': {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        }
+      }
     },
   },
   plugins: [],
