@@ -1,285 +1,275 @@
 import {
-  Trash2,
+  ArrowLeft,
+  Bot,
+  BookOpen,
   Database,
-  LogOut,
   MessageCircle,
   Mic,
   SendHorizonal,
-  VolumeX,
-  Volume2,
-  Book,
   User,
-  Bot,
-} from 'lucide-react';
-import { v4 as uuid } from 'uuid';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-
-import MascotHead, { UIEmotion } from './MascotHead';
-import MicButton from './MicButton';
-import DataDrawer from './DataDrawer';
-import { chat, sttUpload, tts, deleteUserDocs } from '../services/api';
+  Volume2,
+  VolumeX,
+} from 'lucide-react'
+import { useEffect, useRef, useState, useMemo } from 'react'
+import { motion } from 'framer-motion'
+import { useParams, useNavigate } from 'react-router-dom'
+import { Session } from '../hooks/useSessions'
+import { chat, sttUpload, tts } from '../services/api'
+import DataDrawer from './DataDrawer'
+import MascotHead, { UIEmotion } from './MascotHead'
+import MicButton from './MicButton'
+import { useAuth } from '../context/AuthContext'
 
 function mapBackendEmotionToUI(label?: string): UIEmotion {
-  const v = (label || '').toLowerCase().trim();
-  if (['happy', 'encouraging', 'neutral'].includes(v)) return 'smiling';
-  if (['thinking', 'clarifying'].includes(v)) return 'thinking';
-  if (v === 'explaining') return 'speaking';
-  if (v === 'celebrate') return 'celebrate';
-  return 'smiling';
+  const v = (label || '').toLowerCase().trim()
+  if (['happy', 'encouraging', 'neutral'].includes(v)) return 'smiling'
+  if (['thinking', 'clarifying'].includes(v)) return 'thinking'
+  if (v === 'explaining') return 'speaking'
+  if (v === 'celebrate') return 'celebrate'
+  return 'smiling'
 }
 
-type ChatItem = { role: 'user' | 'assistant'; text: string };
+type ChatItem = { role: 'user' | 'assistant'; text: string }
+type Doc = { source: string; snippet: string }
 
-export default function MascotPage({ user }: { user: { name: string; email: string } }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [emotion, setEmotion] = useState<UIEmotion>('smiling');
+type SessionUpdater = Partial<Session> | ((session: Session) => Partial<Session>)
+
+type Props = {
+  allDocs: Doc[]
+  onRefreshDocs: () => Promise<void>
+  sessionsApi: {
+    getSession: (id: string) => Session | undefined
+    updateSession: (id: string, updater: SessionUpdater) => void
+  }
+}
+
+export default function MascotPage({ allDocs, onRefreshDocs, sessionsApi }: Props) {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const { getSession, updateSession } = sessionsApi
+
+  // useMemo ensures this only recalculates when the session data actually changes
+  const session = useMemo(() => (sessionId ? getSession(sessionId) : null), [sessionId, getSession])
+
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
+  const [emotion, setEmotion] = useState<UIEmotion>('smiling')
   const [muteTTS, setMuteTTS] = useState<boolean>(
     () => typeof window !== 'undefined' && localStorage.getItem('ai_tutor_mute') === 'true',
-  );
-  const [busy, setBusy] = useState(false);
-  const [chatMode, setChatMode] = useState<'voice' | 'text'>('text');
-  const [textInput, setTextInput] = useState('');
-  const [messages, setMessages] = useState<ChatItem[]>([]);
-  const sessionId = useMemo(() => uuid(), []);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
+  )
+  const [busy, setBusy] = useState(false)
+  const [chatMode, setChatMode] = useState<'voice' | 'text'>('text')
+  const [textInput, setTextInput] = useState('')
+  const chatContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        document.documentElement.classList.add('dark');
-        localStorage.setItem('ai_tutor_mute', String(muteTTS));
+    // Redirect if the session is not found after a brief moment
+    if (!user || (sessionId && !session)) {
+      const timer = setTimeout(() => navigate('/dashboard', { replace: true }), 200)
+      return () => clearTimeout(timer)
     }
-  }, [muteTTS]);
+  }, [session, user, sessionId, navigate])
 
   useEffect(() => {
-    chatContainerRef.current?.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
+    localStorage.setItem('ai_tutor_mute', String(muteTTS))
+  }, [muteTTS])
 
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [session?.messages])
 
-  const pushMessage = (m: ChatItem) => setMessages((p) => [...p, m]);
+  // Render a loading state or nothing while the session is being looked up
+  // This prevents crashes if the component renders before the session is found
+  if (!session || !user) {
+    return <div className="h-screen w-screen bg-slate-900" />
+  }
+
+  const onSessionUpdate = (updater: SessionUpdater) => {
+    if (sessionId) {
+      updateSession(sessionId, updater)
+    }
+  }
+
+  const pushMessage = (m: ChatItem) => {
+    onSessionUpdate(prevSession => ({
+      messages: [...prevSession.messages, m],
+    }))
+  }
+
+  async function getAssistantResponse(message: string) {
+    setBusy(true)
+    setEmotion('thinking')
+    try {
+      const res = await chat(message, session!.id, user!.name, user!.email, session!.selectedDocs)
+      const text: string = res.text || ''
+      pushMessage({ role: 'assistant', text })
+
+      const mapped = mapBackendEmotionToUI(res.emotion)
+      setEmotion(mapped)
+
+      if (!muteTTS) {
+        const buf = await tts(text)
+        const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })))
+        audio.onplay = () => { setEmotion('speaking'); setSpeaking(true); }
+        audio.onended = () => { setSpeaking(false); setEmotion('smiling'); URL.revokeObjectURL(audio.src); }
+        audio.onerror = () => { setSpeaking(false); setEmotion('sad'); }
+        await audio.play()
+      }
+    } catch (e: any) {
+      setEmotion('sad')
+      pushMessage({ role: 'assistant', text: "I'm sorry, I ran into an error. Please try again." })
+      console.error('Chat failed:', e)
+    } finally {
+      setBusy(false)
+      if (muteTTS) setEmotion('smiling')
+    }
+  }
+
+  async function handleTextInput() {
+    const message = textInput.trim()
+    if (!message || busy) return
+    setTextInput('')
+    pushMessage({ role: 'user', text: message })
+    await getAssistantResponse(message)
+  }
 
   async function handleUtterance(blob: Blob) {
-    if (busy) return;
-    setBusy(true);
-    setEmotion('thinking');
-
+    if (busy) return
+    setBusy(true)
+    setEmotion('thinking')
     try {
-      const transcript = await sttUpload(blob, user.email);
+      const transcript = await sttUpload(blob, user!.email)
       if (transcript) {
-        pushMessage({ role: 'user', text: transcript });
-        await handleChat(transcript);
+        pushMessage({ role: 'user', text: transcript })
+        await getAssistantResponse(transcript)
       } else {
-        throw new Error('No speech detected');
+        setBusy(false)
+        setEmotion('sad')
       }
     } catch (e: any) {
-      sadTemp();
-      alert('Voice recognition failed: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleChat(message: string) {
-    if (!message.trim()) return;
-    if (chatMode === 'text') pushMessage({ role: 'user', text: message });
-
-    setBusy(true);
-    setTextInput('');
-    setEmotion('thinking');
-
-    try {
-      const res = await chat(message, sessionId, user.name, user.email);
-      const text: string = res.text || '';
-      pushMessage({ role: 'assistant', text });
-
-      const mapped = mapBackendEmotionToUI(res.emotion);
-      setEmotion(mapped);
-
-      if (muteTTS) {
-        setSpeaking(true);
-        await new Promise((r) => setTimeout(r, Math.min(3000, text.split(' ').length * 70)));
-        setSpeaking(false);
-        setEmotion('smiling');
-        return;
-      }
-
-      const buf = await tts(text);
-      const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
-
-      audio.onplay = () => {
-        setEmotion('speaking');
-        setSpeaking(true);
-      };
-      audio.onended = () => {
-        setSpeaking(false);
-        setEmotion('smiling');
-        URL.revokeObjectURL(audio.src);
-      };
-      audio.onerror = sadTemp;
-      await audio.play();
-    } catch (e: any) {
-      sadTemp();
-      alert('Chat failed: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function sadTemp() {
-    setSpeaking(true);
-    setEmotion('sad');
-    setTimeout(() => {
-      setSpeaking(false);
-      setEmotion('smiling');
-    }, 1500);
-  }
-
-  function handleLogout() {
-    localStorage.removeItem('ai_tutor_user');
-    window.location.reload();
-  }
-  async function handleDeleteData() {
-    if (!confirm('Delete all your indexed data? This action cannot be undone.')) return;
-    try {
-      await deleteUserDocs(user.email);
-      alert('All data removed.');
-      window.location.reload();
-    } catch (e: any) {
-      alert('Deletion failed: ' + e.message);
+      setBusy(false)
+      setEmotion('sad')
     }
   }
 
   return (
-    <div className="h-screen w-screen flex bg-slate-900 text-zinc-200 font-sans">
-      {/* Sidebar */}
-      <aside className="w-72 bg-gray-900/80 p-6 flex flex-col justify-between border-r border-white/10">
-        <div>
-          <div className="flex items-center gap-3 mb-10">
-            <Book className="text-brand-500" />
-            <h1 className="text-2xl font-display font-bold text-white">AI Tutor</h1>
-          </div>
-
-          <div className="flex flex-col items-center text-center">
-            <MascotHead emotion={emotion} speaking={speaking} className="mb-4" />
-            <p className="text-zinc-400 min-h-[2rem] text-sm">
-              {{
-                thinking: 'Let me think...',
-                speaking: 'Here is what I found!',
-                sad: 'Oops, something went wrong.',
-                celebrate: 'Awesome job! 🎉',
-              }[emotion] || 'I am ready to help!'}
-            </p>
-          </div>
+    <div className="h-screen w-screen flex flex-row bg-slate-900 text-zinc-200 font-sans">
+      {/* Left Pane: Mascot */}
+      <aside className="w-96 flex-shrink-0 hidden lg:flex flex-col items-center justify-center bg-gray-900/80 p-6 border-r border-white/10">
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}>
+          <MascotHead emotion={emotion} speaking={speaking} />
+        </motion.div>
+        <p className="text-zinc-400 min-h-[2rem] text-center mt-4 text-lg font-display">
+          {{
+            thinking: 'Let me think...',
+            speaking: 'Here is what I found!',
+            sad: 'Oops, something went wrong.',
+            celebrate: 'Awesome job!',
+          }[emotion] || 'How can I help you learn?'}
+        </p>
+        <div className="mt-8 flex items-center gap-2">
+          <motion.button whileTap={{ scale: 0.95 }} onClick={() => setChatMode('text')} className={`px-4 py-2 text-sm rounded-md flex items-center gap-2 ${chatMode === 'text' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
+            <MessageCircle className="w-4 h-4" /> Text
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.95 }} onClick={() => setChatMode('voice')} className={`px-4 py-2 text-sm rounded-md flex items-center gap-2 ${chatMode === 'voice' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
+            <Mic className="w-4 h-4" /> Voice
+          </motion.button>
         </div>
-
-        <div className="space-y-2">
-            <button onClick={() => setDrawerOpen(true)} className="w-full btn-ghost justify-start">
-                <Database className="w-4 h-4 mr-2" />
-                Manage My Data
-            </button>
-            <button onClick={handleDeleteData} className="w-full btn-ghost justify-start text-red-400 hover:bg-red-500/10">
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete All Data
-            </button>
-            <button onClick={handleLogout} className="w-full btn-ghost justify-start">
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
-            </button>
-        </div>
+        <motion.button whileTap={{ scale: 0.98 }} whileHover={{ y: -1 }} onClick={() => setDrawerOpen(true)} className="mt-12 w-full max-w-xs btn-ghost justify-center text-base">
+          <Database className="w-4 h-4 mr-2" />
+          Manage Sources
+        </motion.button>
       </aside>
-
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col">
-        <header className="p-4 border-b border-white/10 flex justify-between items-center">
-            <div className='flex items-center'>
-                <h2 className="text-lg font-semibold">Conversation</h2>
-                <div className='ml-4 flex items-center gap-2'>
-                    <button onClick={() => setChatMode('text')} className={`px-3 py-1 text-xs rounded-md ${chatMode === 'text' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
-                        <MessageCircle className="w-4 h-4 inline mr-1" /> Text
-                    </button>
-                    <button onClick={() => setChatMode('voice')} className={`px-3 py-1 text-xs rounded-md ${chatMode === 'voice' ? 'bg-brand-500 text-white' : 'bg-white/10'}`}>
-                        <Mic className="w-4 h-4 inline mr-1" /> Voice
-                    </button>
-                </div>
+      
+      {/* Right Pane: Chat */}
+      <main className="flex-1 flex flex-col h-screen">
+        <header className="p-4 border-b border-white/10 flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate('/dashboard')} className="icon-btn"> <ArrowLeft size={18} /> </button>
+            <div>
+              <h2 className="text-lg font-display leading-tight">{session.name}</h2>
+              <p className="text-xs text-zinc-400">{session.selectedDocs.length} sources selected</p>
             </div>
-            
-            <div className='flex items-center gap-2'>
-                <span className="text-sm text-zinc-400">
-                    Hi, {user.name.split(' ')[0]}
-                </span>
-                <button
-                    onClick={() => setMuteTTS((m) => !m)}
-                    className="icon-btn"
-                    title={muteTTS ? 'Unmute' : 'Mute'}
-                >
-                    {muteTTS ? <VolumeX size={18}/> : <Volume2 size={18} />}
-                </button>
-            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-zinc-400 hidden sm:inline">Hi, {user.name.split(' ')[0]}</span>
+            <button onClick={() => setMuteTTS((m) => !m)} className="icon-btn" title={muteTTS ? 'Unmute' : 'Mute'}>
+              {muteTTS ? <VolumeX size={18} /> : <Volume2 size={18} />}
+            </button>
+          </div>
         </header>
 
         <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
-            {messages.length === 0 && (
-              <div className="h-full flex items-center justify-center text-center text-zinc-500">
-                <motion.div
+          {session.messages.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center text-center text-zinc-500">
+               <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                 >
-                  <div className="text-6xl mb-3">📚</div>
-                  Ask me anything about your documents!
+                  <BookOpen size={48} className="text-zinc-600 mb-4" />
+                  <h3 className="font-display text-lg">Your session is ready.</h3>
+                  <p>Ask me anything about your selected documents!</p>
                 </motion.div>
-              </div>
-            )}
-
-            {messages.map((m, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex items-start gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {m.role === 'assistant' && <div className="w-8 h-8 rounded-full bg-brand-500/50 grid place-items-center flex-shrink-0"><Bot size={18}/></div>}
-                <div className={`${m.role === 'user' ? 'bubble-user' : 'bubble-ai'} max-w-xl`}>
-                  {m.text}
+            </div>
+          )}
+          {session.messages.map((m, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`flex items-start gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              {m.role === 'assistant' && (
+                <div className="w-8 h-8 rounded-full bg-brand-500/50 grid place-items-center flex-shrink-0">
+                  <Bot size={18} />
                 </div>
-                {m.role === 'user' && <div className="w-8 h-8 rounded-full bg-white/10 grid place-items-center flex-shrink-0"><User size={18}/></div>}
-              </motion.div>
-            ))}
+              )}
+              <div className={`${m.role === 'user' ? 'bubble-user' : 'bubble-ai'} max-w-xl`}>{m.text}</div>
+              {m.role === 'user' && (
+                <div className="w-8 h-8 rounded-full bg-white/10 grid place-items-center flex-shrink-0">
+                  <User size={18} />
+                </div>
+              )}
+            </motion.div>
+          ))}
         </div>
 
         <div className="p-4 border-t border-white/5">
-            {chatMode === 'voice' ? (
-              <div className="flex flex-col items-center justify-center">
-                <p className="text-sm text-zinc-400 mb-4">
-                  {busy ? 'Processing your voice...' : 'Click the mic and start talking'}
-                </p>
-                <MicButton onUtterance={handleUtterance} />
-              </div>
-            ) : (
-              <div className="flex gap-3">
-                <input
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === 'Enter' && !busy && textInput.trim() && handleChat(textInput)
-                  }
-                  placeholder="Type your message, or ask about your documents..."
-                  disabled={busy}
-                  className="flex-1 h-12 px-4 rounded-xl bg-gray-900/80 border border-white/10 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
-                />
-                <button
-                  onClick={() => handleChat(textInput)}
-                  className="btn-primary w-24 disabled:opacity-50"
-                  disabled={busy || !textInput.trim()}
-                >
-                  <SendHorizonal className="w-5 h-5" />
-                </button>
-              </div>
-            )}
-          </div>
+          {chatMode === 'voice' ? (
+            <div className="flex flex-col items-center justify-center h-24">
+              <p className="text-sm text-zinc-400 mb-4">{busy ? 'Processing...' : 'Click the mic and start talking'}</p>
+              <MicButton onUtterance={handleUtterance} />
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <input
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleTextInput()}
+                placeholder="Type your message..."
+                disabled={busy}
+                className="flex-1 h-12 px-4 rounded-xl bg-gray-900/80 border border-white/10 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
+              />
+              <motion.button whileTap={{ scale: 0.95 }} onClick={handleTextInput} className="btn-primary w-24 disabled:opacity-50" disabled={busy || !textInput.trim()}>
+                <SendHorizonal className="w-5 h-5" />
+              </motion.button>
+            </div>
+          )}
+        </div>
       </main>
 
-      <DataDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} email={user.email} />
+      <DataDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        email={user.email}
+        selectedDocs={session.selectedDocs}
+        onSelectionChange={(newSelection) => onSessionUpdate({ selectedDocs: newSelection })}
+        allDocs={allDocs}
+        onRefresh={onRefreshDocs}
+      />
     </div>
-  );
+  )
 }

@@ -6,7 +6,7 @@ export async function initOrCheckUser(email: string) {
   return res.json()
 }
 
-export async function listUserDocs(email: string) {
+export async function listUserDocs(email: string): Promise<{source: string, snippet: string}[]> {
   const res = await fetch(`${API_BASE}/docs/list?email=${encodeURIComponent(email)}`)
   if (!res.ok) return []
   const payload = await res.json()
@@ -38,11 +38,18 @@ export async function sttUpload(blob: Blob, email: string) {
   return res.text()
 }
 
-export async function chat(message: string, sessionId: string, name: string, email: string) {
+export async function chat(message: string, sessionId: string, name: string, email: string, sourceDocuments: string[]) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ message, session_id: sessionId, name, email, short_answer: true })
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      name,
+      email,
+      short_answer: true,
+      source_documents: sourceDocuments,
+    })
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()

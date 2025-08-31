@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from qdrant_client.http.models import PointStruct, Distance, VectorParams
+from qdrant_client.http.models import PointStruct, Distance, VectorParams, PayloadSchemaType
 import tiktoken
 import uuid
 from app.core.config import settings
@@ -97,7 +97,7 @@ def upsert_documents(paths: List[str],
     example_vec = MODEL.encode("example", convert_to_numpy=True)
     dim = int(example_vec.shape[0])
 
-    # Create collection if not exists
+    # Check if collection exists. If not, create it.
     try:
         client.get_collection(collection_name)
     except Exception:
@@ -105,6 +105,16 @@ def upsert_documents(paths: List[str],
             collection_name,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
         )
+
+    # **THE FIX:** Proactively create the payload index. This is idempotent.
+    # If the index already exists, this call does nothing. If it doesn't, it creates it.
+    # `wait=True` ensures the operation completes before we proceed.
+    client.create_payload_index(
+        collection_name=collection_name,
+        field_name="file_name",
+        field_schema=PayloadSchemaType.KEYWORD,
+        wait=True
+    )
 
     uploaded = 0
     for path_str in paths:
@@ -131,8 +141,9 @@ def upsert_documents(paths: List[str],
                 payload.update(metadata_overrides)
             points.append(PointStruct(id=chunk_id, vector=vec, payload=payload))
             uploaded += 1
-
+        
         client.upsert(collection_name=collection_name, points=points)
+        
     return {"upserted_chunks": uploaded}
 
 

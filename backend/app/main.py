@@ -119,10 +119,21 @@ class ChatRequest(BaseModel):
     email: str
     top_k: Optional[int] = 6
     short_answer: Optional[bool] = False
+    source_documents: Optional[List[str]] = None
 
-def _build_contexts(message: str, top_k: int, include_summary: bool, session_id: Optional[str], collection_name: str):
+def _build_contexts(message: str, top_k: int, include_summary: bool, session_id: Optional[str], collection_name: str, source_documents: Optional[List[str]] = None):
     retriever = QdrantRetriever(collection=collection_name)
-    docs = retriever.retrieve(message, top_k=top_k or 6)
+    
+    qdrant_filter = None
+    if source_documents:
+        qdrant_filter = models.Filter(
+            should=[
+                models.FieldCondition(key="file_name", match=models.MatchValue(value=doc))
+                for doc in source_documents
+            ]
+        )
+
+    docs = retriever.retrieve(message, top_k=top_k or 6, filter_payload=qdrant_filter)
     contexts = [{"id": d.id, "text": d.text, "source": d.source} for d in docs]
     if include_summary and session_id:
         summary = get_summary(session_id) or ""
@@ -145,7 +156,14 @@ async def chat_endpoint(req: ChatRequest):
             append_turn(req.session_id, "user", f"{req.name or 'user'}: {req.message}")
             update_summary_if_needed(req.session_id, threshold_turns=20)
         
-        contexts = _build_contexts(req.message, req.top_k or 6, include_summary=True, session_id=req.session_id, collection_name=collection_name)
+        contexts = _build_contexts(
+            req.message, 
+            req.top_k or 6, 
+            include_summary=True, 
+            session_id=req.session_id, 
+            collection_name=collection_name, 
+            source_documents=req.source_documents
+        )
         gen = generate_answer(req.message, contexts, max_tokens=512, temperature=0.0, short_answer=bool(req.short_answer))
         text = gen["text"].strip()
         emotion = classify_emotion(text)

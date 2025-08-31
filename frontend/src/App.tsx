@@ -1,35 +1,102 @@
 import { useEffect, useState } from 'react'
-import EntryScreen from './components/EntryScreen'
-import RagInit from './components/RagInit'
-import MascotPage from './components/MascotPage'
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import { useAuth } from './context/AuthContext'
 import { initOrCheckUser, listUserDocs } from './services/api'
+import { useSessions } from './hooks/useSessions'
 
-type User = { name: string; email: string }
+import EntryScreen from './components/EntryScreen'
+import MascotPage from './components/MascotPage'
+import SessionDashboard from './components/SessionDashboard'
+import CreateSession from './components/CreateSession'
+import ConfirmationModal from './components/ConfirmationModal'
+import ProtectedRoute from './router/ProtectedRoute'
+
+type Doc = { source: string; snippet: string }
+type ModalState = { isOpen: boolean; title: string; message: string; onConfirm: () => void }
+
+const pageVariants = {
+  initial: { opacity: 0 },
+  in: { opacity: 1 },
+  out: { opacity: 0 },
+}
+const pageTransition = {
+  type: 'tween',
+  ease: 'easeInOut',
+  duration: 0.3,
+}
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null)
-  const [hasData, setHasData] = useState<boolean | null>(null)
+  const { user, isLoading: isAuthLoading } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [allUserDocs, setAllUserDocs] = useState<Doc[]>([])
+  const [modalState, setModalState] = useState<ModalState>({ isOpen: false, title: '', message: '', onConfirm: () => {} })
 
-  useEffect(()=>{
-    const cached = localStorage.getItem('ai_tutor_user')
-    if (cached) setUser(JSON.parse(cached))
-  }, [])
+  const { sessions, addSession, updateSession, deleteSession, getSession } = useSessions(user)
 
-  useEffect(()=>{
-    (async()=>{
-      if (!user) return
-      const status = await initOrCheckUser(user.email).catch(()=>null)
-      if (status && typeof status.has_data === 'boolean') {
-        setHasData(status.has_data)
-      } else {
-        const docs = await listUserDocs(user.email)
-        setHasData(docs.length > 0)
+  const showConfirmation = (title: string, message: string, onConfirm: () => void) => {
+    setModalState({ isOpen: true, title, message, onConfirm })
+  }
+
+  async function fetchDocs() {
+    if (user) {
+      const docs = await listUserDocs(user.email)
+      setAllUserDocs(docs)
+    }
+  }
+
+  useEffect(() => {
+    if (user) {
+      fetchDocs() // Fetch docs whenever user is available
+      // If user is on a public page after login, redirect to dashboard
+      if (['/login', '/'].includes(location.pathname)) {
+        navigate('/dashboard')
       }
-    })()
-  }, [user])
+    }
+  }, [user, navigate])
 
-  if (!user) return <EntryScreen onSubmit={(u)=>{ setUser(u); localStorage.setItem('ai_tutor_user', JSON.stringify(u)) }} />
-  if (hasData === null) return <div className="h-screen flex items-center justify-center bg-zinc-900 text-zinc-400 font-sans">Checking your knowledge base…</div>
-  if (!hasData) return <RagInit user={user} onComplete={()=>setHasData(true)} />
-  return <MascotPage user={user} />
+  if (isAuthLoading) {
+     return <div className="h-screen flex items-center justify-center bg-zinc-900"></div>; // Blank screen during auth check
+  }
+
+  return (
+    <>
+      <ConfirmationModal {...modalState} onClose={() => setModalState({ ...modalState, isOpen: false })} />
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={location.pathname}
+          initial="initial"
+          animate="in"
+          exit="out"
+          variants={pageVariants}
+          transition={pageTransition}
+        >
+          <Routes location={location}>
+            <Route path="/login" element={<EntryScreen />} />
+            
+            <Route element={<ProtectedRoute />}>
+              <Route path="/dashboard" element={<SessionDashboard 
+                sessions={sessions} 
+                allDocs={allUserDocs}
+                onRefreshDocs={fetchDocs}
+                onDeleteSession={deleteSession} 
+                showConfirmation={showConfirmation} 
+              />} />
+              <Route path="/session/new" element={<CreateSession
+                allDocs={allUserDocs}
+                onRefreshDocs={fetchDocs}
+                onCreate={(name, docs) => {
+                  const newSession = addSession({ name, selectedDocs: docs, messages: [] });
+                  navigate(`/session/${newSession.id}`);
+                }}
+              />} />
+              <Route path="/session/:sessionId" element={<MascotPage allDocs={allUserDocs} onRefreshDocs={fetchDocs} sessionsApi={{ getSession, updateSession }} />} />
+              <Route path="/" element={<Navigate to="/dashboard" />} />
+            </Route>
+          </Routes>
+        </motion.div>
+      </AnimatePresence>
+    </>
+  )
 }

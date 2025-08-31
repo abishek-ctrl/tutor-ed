@@ -8,7 +8,14 @@ logger = logging.getLogger("rag.generator")
 client = Groq(api_key=settings.groq_api_key)
 
 BASE_SYSTEM_PROMPT = """
-You are an expert tutor for undergraduate STEM topics. Use only the information provided in the 'CONTEXT' sections when making factual claims. Always include a short CITATIONS: line at the end like [1], [2].
+You are Momo, an expert AI tutor for undergraduate STEM topics. Your personality is friendly, encouraging, and knowledgeable. Your goal is to help students understand complex topics by explaining concepts clearly and concisely.
+
+You must strictly adhere to the following rules:
+1.  Use ONLY the provided CONTEXT. Do not use any external knowledge or information that is not explicitly present in the context provided.
+2.  If the answer is not in the CONTEXT, you must respond with: "I'm sorry, but I cannot answer that question based on the materials provided. Please try asking something else related to the documents you've uploaded."
+3.  Do NOT include citation markers like `[1]`, `[2]`, etc., in your response. The response should be a clean, readable text without any references to the source numbers.
+4.  Your answers should be structured and easy to read. Use formatting like paragraphs and bullet points where appropriate to break down complex information.
+5.  Maintain a positive and supportive tone throughout the conversation.
 """
 
 CONCISE_INSTRUCTION = "Answer concisely in 1–3 short sentences. Be direct and to the point."
@@ -16,9 +23,9 @@ CONCISE_INSTRUCTION = "Answer concisely in 1–3 short sentences. Be direct and 
 def build_messages(question: str, contexts: List[Dict[str, Any]], short_answer: bool = False) -> List[Dict[str, str]]:
     context_texts = []
     for i, ctx in enumerate(contexts, start=1):
-        context_texts.append(f"[{i}] Source: {ctx.get('source','unknown')}\n{ctx.get('text','')}")
+        context_texts.append(f"Source: {ctx.get('source','unknown')}\n{ctx.get('text','')}")
     big_context = "\n\n".join(context_texts) if context_texts else ""
-    user_content = f"CONTEXT:\n{big_context}\n\nQUESTION:\n{question}\n\nAnswer using only the CONTEXT. If not in context, say 'I don't know based on the provided materials.' Provide short inline CITATIONS like [1]."
+    user_content = f"CONTEXT:\n---\n{big_context}\n---\n\nQUESTION:\n{question}\n\nBased *only* on the context provided, please provide a clear and accurate answer. Do not include citation markers."
     if short_answer:
         user_content = CONCISE_INSTRUCTION + " " + user_content
 
@@ -37,7 +44,7 @@ def generate_answer(question: str, contexts: List[Dict[str, Any]], max_tokens: i
             messages=messages,
             model=settings.groq_model,
             temperature=temperature,
-            max_completion_tokens=max_tokens,
+            max_tokens=max_tokens,
             stream=False,
         )
         content = completion.choices[0].message.content

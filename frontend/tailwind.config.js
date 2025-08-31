@@ -20,7 +20,7 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
-        display: ['Outfit', 'sans-serif'], // For headings and prominent text
+        display: ['Lora', 'serif'],
       },
     },
   },

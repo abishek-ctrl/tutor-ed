@@ -4,11 +4,11 @@
 
 .btn-primary {
   @apply inline-flex items-center justify-center rounded-xl px-6 py-3 font-semibold text-white shadow-lg transition-transform;
-  background-color: #6366f1; /* brand-500 */
+  background-image: linear-gradient(to right, #6366f1, #818cf8);
 }
 .btn-primary:hover { 
   transform: translateY(-1px); 
-  background-color: #4f46e5; /* brand-600 */
+  @apply shadow-xl;
 }
 
 .btn-ghost {
@@ -28,8 +28,10 @@
   /* chat bubbles */
   .bubble         {@apply relative px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-md;}
   .bubble-ai      {@apply bubble bg-slate-800 text-zinc-200 rounded-bl-none;}
-  .bubble-user    {@apply bubble bg-brand-500 text-white rounded-br-none;}
-
+  .bubble-user    {
+    @apply bubble text-white rounded-br-none;
+    background-image: linear-gradient(to right, #4f46e5, #6366f1);
+  }
 }
 
 @layer utilities {

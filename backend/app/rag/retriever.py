@@ -27,9 +27,14 @@ class QdrantRetriever:
         vec = EMBED_MODEL.encode(query, convert_to_numpy=True)
         return vec.tolist()
 
-    def retrieve(self, query: str, top_k: int = 8, filter_payload: dict = None) -> List[RetrievedDoc]:
+    def retrieve(self, query: str, top_k: int = 8, filter_payload: Optional[models.Filter] = None) -> List[RetrievedDoc]:
         qvec = self.embed_query(query)
-        results = self.client.search(collection_name=self.collection, query_vector=qvec, limit=top_k)
+        results = self.client.search(
+            collection_name=self.collection,
+            query_vector=qvec,
+            limit=top_k,
+            query_filter=filter_payload
+        )
         docs: List[RetrievedDoc] = []
         for r in results:
             payload = r.payload or {}
