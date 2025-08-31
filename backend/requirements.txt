@@ -1,10 +1,9 @@
 fastapi
 uvicorn[standard]
 pydantic
-groq  # use the official SDK from Groq (version may vary; use pip to install latest)
+groq
 qdrant-client
 sentence-transformers
-# torch>=1.12.0   # required by sentence-transformers (if not using CPU-only wheel, adjust)
 numpy
 redis
 python-multipart
@@ -12,3 +11,4 @@ pypdf
 tiktoken
 requests
 tenacity
+gunicorn
