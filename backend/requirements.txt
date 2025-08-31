@@ -12,3 +12,4 @@ tiktoken
 requests
 tenacity
 gunicorn
+pydantic_settings
