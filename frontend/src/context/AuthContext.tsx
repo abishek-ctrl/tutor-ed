@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 type User = { name: string; email: string };
 
@@ -11,9 +12,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+// A new component to wrap the provider and give it access to router hooks
+function AuthProviderWithRouter({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate(); // Use the hook here
 
   useEffect(() => {
     // Check for a logged-in user in localStorage on initial load
@@ -38,16 +41,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     localStorage.removeItem('ai_tutor_user');
     setUser(null);
-    // Optionally, clear other user-related data
-    window.location.href = '/login'; // Force a reload to clear all state
+    // Use the navigate function for a smooth, client-side transition
+    navigate('/login'); 
   };
-
+  
   return (
     <AuthContext.Provider value={{ user, login, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
 }
+
+
+// The main provider now uses the wrapper
+export function AuthProvider({ children }: { children: ReactNode }) {
+  return <AuthProviderWithRouter>{children}</AuthProviderWithRouter>;
+}
+
 
 export function useAuth() {
   const context = useContext(AuthContext);
